@@ -1,0 +1,24 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+pybela =  {git = "https://github.com/BelaPlatform/pybela.git", ref = "dev", editable = true}
+wandb = "==0.16"
+matplotlib = "*"
+bokeh = "==2.4.3"
+pandas = "*"
+ipykernel = "*"
+numpy = "==1.26.2"
+
+[dev-packages]
+pip-chill = "*"
+
+[scripts]
+test = "python src/test.py"
+train = "python src/train.py"
+dataset = "python src/dataset/dataset.py"
+
+[requires]
+python_version = "3.9"

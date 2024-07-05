@@ -1,0 +1,28 @@
+project: "faab_autoencoder_transformer"
+# dataset parameters
+pickle_path: "src/dataset/processed_dataset_512.pkl"
+pred: False
+seq_len: 512
+batch_size: 64
+
+# common model parameters
+feat_in_size: 8 # feature size
+d_model: 4
+ff_size: 12
+num_layers: 4
+
+# model parameters transformer
+model: "transformer"
+num_heads: 2
+pe_scale_factor: 1
+mask: False
+
+# training parameters
+max_grad_norm: 0
+dropout: 0
+epochs: 500
+optimizer: "rmsprop"
+learning_rate: 0.0001
+scheduler_step_size: 0
+scheduler_gamma: 0.1
+plotter_samples: 5

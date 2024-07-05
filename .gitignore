@@ -1,0 +1,11 @@
+*.bin
+*.pkl
+.vscode/*
+__pycache__/*
+*/*/__pycache__/*
+wandb/*
+src/dataset/data/*
+*.csv
+.DS_Store
+.ipynb_checkpoints/*
+src/dataset/.ipynb_checkpoints/*
