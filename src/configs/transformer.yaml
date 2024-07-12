@@ -1,6 +1,6 @@
 project: "faab_autoencoder_transformer"
 # dataset parameters
-pickle_path: "src/dataset/processed_dataset_512.pkl"
+pickle_path: "07041536_processed_512.pkl"
 pred: False
 seq_len: 512
 batch_size: 64

@@ -4,7 +4,7 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-pybela =  {git = "https://github.com/BelaPlatform/pybela.git", ref = "dev", editable = true}
+pybela = {ref = "dev", git = "https://github.com/BelaPlatform/pybela.git"}
 wandb = "==0.16"
 matplotlib = "*"
 bokeh = "==2.4.3"

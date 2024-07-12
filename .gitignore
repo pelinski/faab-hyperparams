@@ -9,3 +9,5 @@ src/dataset/data/*
 .DS_Store
 .ipynb_checkpoints/*
 src/dataset/.ipynb_checkpoints/*
+src/models/trained/*
+log*

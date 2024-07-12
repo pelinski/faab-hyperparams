@@ -3,14 +3,14 @@ import wandb
 import os
 import numpy as np
 from tqdm import tqdm
-from model import TransformerAutoencoder, LSTM
+from models import TransformerAutoencoder, LSTM
 from dataset import Dataset, DatasetPred
 from utils import get_html_plot, load_hyperparams
 
 
 hyperparameters, hp_path = load_hyperparams()
 
-os.environ["WANDB_MODE"] = "offline"  # testing
+os.environ["WANDB_MODE"] = "online"  # testing
 
 with wandb.init(project=hyperparameters["project"], config=hyperparameters,  settings=wandb.Settings(start_method="fork"), job_type="train"):
 
