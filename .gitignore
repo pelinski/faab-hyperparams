@@ -11,3 +11,5 @@ src/dataset/data/*
 src/dataset/.ipynb_checkpoints/*
 src/models/trained/*
 log*
+.clang-format
+src/__pycache__/*

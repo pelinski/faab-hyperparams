@@ -1,12 +1,6 @@
 from pybela import Streamer
-# import logging
-# import cProfile
-# import pstats
 import asyncio
 
-
-# logging.basicConfig(filename='callback_log.log',
-#                     level=logging.INFO, format='%(asctime)s - %(message)s')
 
 vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4', 'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
 streamer = Streamer()
@@ -34,8 +28,3 @@ def main():
         streamer.stop_streaming()
 
 main()
-
-# cProfile.run('main()', 'profile_stats')
-# p = pstats.Stats('profile_stats')
-# # Adjust the number to display more or fewer lines
-# p.sort_stats('cumulative').print_stats(100)

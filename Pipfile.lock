@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "dc8647ad5c833531ee384f1b806efc87bfeefc1966e436ba5a6f59e4d4c701e1"
+            "sha256": "caefb6d4815f85c8a1dda425c775c1f2d70ea4bad395bb251f9833cce9ec9a95"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -38,14 +38,6 @@
                 "sha256:a841dacd6b99318a741b166adb07e19ee71a274450e68237b4650ca1055ab128"
             ],
             "version": "==1.4.4"
-        },
-        "appnope": {
-            "hashes": [
-                "sha256:1de3860566df9caf38f01f86f65e0e13e379af54f9e4bee1e66b48f2efffd1ee",
-                "sha256:502575ee11cd7a28c0205f379b525beefebab9d161b7c964670864014ed7213c"
-            ],
-            "markers": "platform_system == 'Darwin'",
-            "version": "==0.1.4"
         },
         "argon2-cffi": {
             "hashes": [
@@ -632,11 +624,11 @@
         },
         "exceptiongroup": {
             "hashes": [
-                "sha256:5258b9ed329c5bbdd31a309f53cbfb0b155341807f6ff7606a1e801a891b29ad",
-                "sha256:a4785e48b045528f5bfe627b6ad554ff32def154f42372786903b7abcfe1aa16"
+                "sha256:3111b9d131c238bec2f8f516e123e14ba243563fb135d3fe885990585aa7795b",
+                "sha256:47c2edf7c6738fafb49fd34290706d1a1a2f4d1c6df275526b62cbb4aa5393cc"
             ],
             "markers": "python_version < '3.11'",
-            "version": "==1.2.1"
+            "version": "==1.2.2"
         },
         "executing": {
             "hashes": [
@@ -907,11 +899,11 @@
         },
         "jupyter-server": {
             "hashes": [
-                "sha256:12558d158ec7a0653bf96cc272bc7ad79e0127d503b982ed144399346694f726",
-                "sha256:16f7177c3a4ea8fe37784e2d31271981a812f0b2874af17339031dc3510cc2a5"
+                "sha256:47ff506127c2f7851a17bf4713434208fc490955d0e8632e95014a9a9afbeefd",
+                "sha256:66095021aa9638ced276c248b1d81862e4c50f292d575920bbe960de1c56b12b"
             ],
             "markers": "python_version >= '3.8'",
-            "version": "==2.14.1"
+            "version": "==2.14.2"
         },
         "jupyter-server-terminals": {
             "hashes": [
@@ -1501,7 +1493,7 @@
                 "sha256:f1279ab38ecbfae7e456a108c5c0681e4956d5b1090027c1de0f934dfdb4b35c",
                 "sha256:f4f118245c4a087776e0a8408be33cf09f6c547442c00395fbfb116fac2f8ac2"
             ],
-            "markers": "sys_platform != 'linux'",
+            "markers": "python_version == '3.9' and sys_platform == 'linux'",
             "version": "==4.25.3"
         },
         "psutil": {
@@ -1543,7 +1535,7 @@
         },
         "pybela": {
             "git": "https://github.com/BelaPlatform/pybela.git",
-            "ref": "748f3ec2f97b400814e1ad7bd653ba755b03032e"
+            "ref": "7f2f969f6f7f9b5567f782f0d2acd841c61e1226"
         },
         "pycparser": {
             "hashes": [
@@ -1927,6 +1919,14 @@
             ],
             "markers": "python_version >= '3.8'",
             "version": "==0.19.0"
+        },
+        "seaborn": {
+            "hashes": [
+                "sha256:636f8336facf092165e27924f223d3c62ca560b1f2bb5dff7ab7fad265361987",
+                "sha256:93e60a40988f4d65e9f4885df477e2fdaff6b73a9ded434c1ab356dd57eefff7"
+            ],
+            "index": "pypi",
+            "version": "==0.13.2"
         },
         "send2trash": {
             "hashes": [

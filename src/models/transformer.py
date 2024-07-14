@@ -111,6 +111,7 @@ class TransformerAutoencoder(torch.nn.Module):
     def __init__(self, **kwargs):
         super(TransformerAutoencoder, self).__init__()
 
+        self.id = kwargs.get("id", "")
         self.d_model = kwargs.get("d_model", 4)
         self.feat_in_size = kwargs.get("feat_in_size", 8)
         self.num_heads = kwargs.get("num_heads", 1)
@@ -133,8 +134,13 @@ class TransformerAutoencoder(torch.nn.Module):
     def forward(self, src):
         # src N x seq_len x feat_in_size_src
         x = self.InputLayerEncoder(src)  # N x seq_len x d_model
-        memory = self.Encoder(x)  # Nxseq_len x d_model
+        memory = self.Encoder(x)  # N x seq_len x d_model
         return self.OutputLayer(memory)
+    
+    def forward_encoder(self, src):
+        x = self.InputLayerEncoder(src) # N x seq_len x d_model
+        memory = self.Encoder(x) # N x seq_len x d_model
+        return memory
 
 
 if __name__ == "__main__":
@@ -167,7 +173,7 @@ if __name__ == "__main__":
 
     x = torch.randn(batch_size, seq_len, feat_in_size)
     model = TransformerAutoencoder(
-        d_model, feat_in_size, num_heads, ff_size, dropout, num_layers, seq_len, pe_scale_factor)
+        d_model=d_model, feat_in_size=feat_in_size, num_heads=num_heads, ff_size=ff_size, dropout=dropout, num_layers=num_layers, seq_len=seq_len, pe_scale_factor=pe_scale_factor)
     output = model(x)
     memory = model.Encoder(model.InputLayerEncoder(x))
     print("Input shape:", x.shape)
