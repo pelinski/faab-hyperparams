@@ -9,14 +9,12 @@
 #define MAX_EXPECTED_BUFFER_SIZE 512
 
 std::vector<Watcher<float>*> gFaabWatchers;
-std::vector<std::vector<float>> circularBuffers(NUM_OUTPUTS);
+std::vector<std::vector<float>> circularBuffers(NUM_OUTPUTS + 1); // +1 for the modelUpdateClock
 
 size_t circularBufferSize = 30 * 1024;
 size_t prefillSize = 3 * 1024;
-uint32_t circularBufferWriteIndex[NUM_OUTPUTS] = {0};
-uint32_t circularBufferReadIndex[NUM_OUTPUTS] = {0};
-uint32_t absoluteBufferWriteIndex[NUM_OUTPUTS] = {0};
-uint32_t absoluteBufferReadIndex[NUM_OUTPUTS] = {0};
+uint32_t circularBufferWriteIndex[NUM_OUTPUTS + 1] = {0};
+uint32_t circularBufferReadIndex[NUM_OUTPUTS + 1] = {0};
 
 struct ReceivedBuffer {
     uint32_t bufferId;
@@ -33,7 +31,7 @@ struct CallbackBufferCount {
     uint32_t guiBufferId;
     uint64_t count;
 };
-CallbackBufferCount callbackBufferCounts[NUM_OUTPUTS];
+CallbackBufferCount callbackBufferCounts[NUM_OUTPUTS + 1];
 
 unsigned int gAudioFramesPerAnalogFrame;
 
@@ -60,14 +58,13 @@ bool binaryDataCallback(const std::string& addr, const WSServerDetails* id, cons
            totalReceivedCount, size, receivedBuffer.bufferId, receivedBuffer.bufferType, receivedBuffer.bufferLen);
 
     int _id = receivedBuffer.bufferId;
-    if (_id >= 0 && _id < NUM_OUTPUTS) {
+    if (_id >= 0 && _id < NUM_OUTPUTS + 1) {
         callbackBufferCounts[_id].count++;
         for (size_t i = 0; i < receivedBuffer.bufferLen; ++i) {
             circularBuffers[_id][circularBufferWriteIndex[_id]] = receivedBuffer.bufferData[i];
             // circularBuffers[_id][circularBufferWriteIndex[_id]] = ((float*)(data +
             // receivedBufferHeaderSize))[i];
             circularBufferWriteIndex[_id] = (circularBufferWriteIndex[_id] + 1) % circularBufferSize;
-            absoluteBufferWriteIndex[_id]++;
         }
     }
 
@@ -87,7 +84,7 @@ bool setup(BelaContext* context, void* userData) {
     }
 
     // output buffers init
-    for (int i = 0; i < NUM_OUTPUTS; ++i) {
+    for (int i = 0; i < NUM_OUTPUTS + 1; ++i) {
         callbackBufferCounts[i].guiBufferId = Bela_getDefaultWatcherManager()->getGui().setBuffer('f', 1024);
         callbackBufferCounts[i].count = 0;
         circularBuffers[i].resize(circularBufferSize, 0.0f);
@@ -95,7 +92,6 @@ bool setup(BelaContext* context, void* userData) {
         // // prefill each circular buffer with prefillSize zeroes to give the write
         // pointer some time to catch up
         circularBufferWriteIndex[i] = prefillSize % circularBufferSize;
-        absoluteBufferWriteIndex[i] = prefillSize;
     }
 
     // printf("dataBufferId_1: %d, dataBufferId_2: %d \n",
@@ -125,28 +121,17 @@ void render(BelaContext* context, void* userData) {
             }
 
             // analog outputs
-            for (unsigned int i = 0; i < NUM_OUTPUTS; i++) {
+            for (unsigned int i = 0; i < NUM_OUTPUTS + 1; i++) {
                 analogWrite(context, n, i, circularBuffers[i][circularBufferReadIndex[i]]);
                 if (totalReceivedCount > 0 && (circularBufferReadIndex[i] + 1) % circularBufferSize != circularBufferWriteIndex[i]) {
-                    absoluteBufferReadIndex[i]++;
                     circularBufferReadIndex[i] = (circularBufferReadIndex[i] + 1) % circularBufferSize;
                 }
                 // else if (totalReceivedCount > 0) {
                 //     rt_printf("Buffer %d full\n", i);
                 // }
             }
-
-            uint diff = absoluteBufferWriteIndex[0] - absoluteBufferReadIndex[0];
-            // print to check pointers
-            if (totalReceivedCount > 0 && diff <= 1) {
-                rt_printf("%llu %llu %d \n", frames, totalReceivedCount, diff);
-            }
         }
     }
-
-    //	DataBuffer& receivedBuffer =
-    // Bela_getDefaultWatcherManager()->getGui().getDataBuffer(dataBufferId);
-    //	float* data = receivedBuffer.getAsFloat();
 }
 
 void cleanup(BelaContext* context, void* userData) {

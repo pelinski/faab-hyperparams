@@ -15,7 +15,6 @@ streamer.connect()
 
 # preload models
 run_ids = get_all_run_ids(path=path)
-starter_id = run_ids[0]
 models = {}
 models_running_range = {}
 for _id in run_ids:
@@ -30,12 +29,14 @@ full_dataset_models_range = get_models_range(path=path)
 models_coordinates = get_models_coordinates(path=path)
 
 num_blocks_to_compute_avg = 10
+trigger_width = 25
+trigger_idx = 4
 
-# init average and model
-model_avg = torch.empty(0).to(device)
-model_min = torch.empty(0).to(device)
-model_max = torch.empty(0).to(device)
+# init average, min max and model
+model_avg, model_min, model_max = torch.empty(0).to(
+    device), torch.empty(0).to(device),  torch.empty(0).to(device)
 
+starter_id = run_ids[0]
 model = models[starter_id]
 
 # settings
@@ -61,8 +62,6 @@ async def callback(block):
                 1, 0)  # num_outputs, seq_len
             # outputs --> [ff_size, num_heads, num_layers, learning_rate]
 
-            # for idx,feature in enumerate(out): # send each feature to Bela
-            #     streamer.send_buffer(idx, 'f', seq_len, feature.tolist())
             model_avg = torch.cat(
                 (model_avg, out.mean(dim=1).unsqueeze(0)), dim=0)
 
@@ -72,10 +71,19 @@ async def callback(block):
                 model_max = torch.cat(
                     (model_max, out.max(dim=1).values.unsqueeze(0)), dim=0)
 
+            for idx, feature in enumerate(out):  # send each feature to Bela
+                streamer.send_buffer(idx, 'f', seq_len, feature.tolist())
+
+            if len(model_avg) < num_blocks_to_compute_avg:
+                streamer.send_buffer(trigger_idx, 'f', seq_len, seq_len*[0])
+            elif len(model_avg) == num_blocks_to_compute_avg:
+                streamer.send_buffer(
+                    trigger_idx, 'f', seq_len, trigger_width*[1] + (seq_len-trigger_width)*[0])
+
         if len(model_avg) == num_blocks_to_compute_avg:
-            
-            # -- normalisation -- 
-            
+
+            # -- normalisation --
+
             # average model output over 512 * num_blocks_to_compute_avg
             _avg = model_avg.mean(dim=0)
 
@@ -99,7 +107,7 @@ async def callback(block):
             _avg = (_avg - _min) / (_max - _min)
             _avg = _avg.detach().cpu().tolist()
 
-            # -- gain -- 
+            # -- gain --
             # multiply the final averaged value by a tuned gain
             gain = [1.35, 1.1, 1.5, 1.5]
             _avg = [a * g for a, g in zip(_avg, gain)]
@@ -115,6 +123,8 @@ async def callback(block):
             print(model.id, _avg)
 
 streamer.start_streaming(vars, on_block_callback=callback)
+
+
 async def wait_forever():
     await asyncio.Future()
 asyncio.run(wait_forever())
