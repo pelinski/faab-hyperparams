@@ -12,6 +12,7 @@ pandas = "*"
 ipykernel = "*"
 numpy = "==1.26.2"
 seaborn = "*"
+ipywidgets = "*"
 
 [dev-packages]
 pip-chill = "*"

@@ -20,7 +20,7 @@ models_running_range = {}
 for _id in run_ids:
     models[_id] = load_model(_id, path=path)
     models_running_range[_id] = {"min": torch.FloatTensor([0, 0, 0, 0]).to(
-        device), "max": torch.FloatTensor([1, 1, 1, 1]).to(device)}
+        device), "max": torch.FloatTensor([0, 0, 0, 0]).to(device)}
 
 # model space
 # min and max of model outputs (after passing the whole dataset)
@@ -32,9 +32,8 @@ num_blocks_to_compute_avg = 10
 trigger_width = 25
 trigger_idx = 4
 
-# init average, min max and model
-model_avg, model_min, model_max = torch.empty(0).to(
-    device), torch.empty(0).to(device),  torch.empty(0).to(device)
+# init average
+model_avg= torch.empty(0).to(device)
 
 starter_id = run_ids[0]
 model = models[starter_id]
@@ -42,12 +41,15 @@ model = models[starter_id]
 # settings
 running_norm = True
 
+gain = 4*[1.0]
+
+counter = 0
 
 async def callback(block):
 
     # global variables so that the state is kept between callback calls
-    global model_avg, model_min, model_max, model
-
+    global model_avg, model_min, model_max, model, gain, counter
+    
     with torch.no_grad():
 
         _raw_data_tensor = torch.stack([torch.FloatTensor(
@@ -61,40 +63,15 @@ async def callback(block):
             out = model.forward_encoder(_input.to(device)).permute(
                 1, 0)  # num_outputs, seq_len
             # outputs --> [ff_size, num_heads, num_layers, learning_rate]
-
-            model_avg = torch.cat(
-                (model_avg, out.mean(dim=1).unsqueeze(0)), dim=0)
-
-            if running_norm:
-                model_min = torch.cat(
-                    (model_min, out.min(dim=1).values.unsqueeze(0)), dim=0)
-                model_max = torch.cat(
-                    (model_max, out.max(dim=1).values.unsqueeze(0)), dim=0)
-
-            for idx, feature in enumerate(out):  # send each feature to Bela
-                streamer.send_buffer(idx, 'f', seq_len, feature.tolist())
-
-            if len(model_avg) < num_blocks_to_compute_avg:
-                streamer.send_buffer(trigger_idx, 'f', seq_len, seq_len*[0])
-            elif len(model_avg) == num_blocks_to_compute_avg:
-                streamer.send_buffer(
-                    trigger_idx, 'f', seq_len, trigger_width*[1] + (seq_len-trigger_width)*[0])
-
-        if len(model_avg) == num_blocks_to_compute_avg:
-
+            
             # -- normalisation --
-
-            # average model output over 512 * num_blocks_to_compute_avg
-            _avg = model_avg.mean(dim=0)
-
-            # model output has an arbitrary range, so normalise the model output
 
             # running normalisation (taking max and min from the current run)
             if running_norm:
                 models_running_range[_id]["min"] = torch.stack(
-                    (models_running_range[_id]["min"], model_min.min(dim=0).values), dim=0).min(dim=0).values
+                    (models_running_range[_id]["min"], out.min(dim=1).values), dim=0).min(dim=0).values
                 models_running_range[_id]["max"] = torch.stack(
-                    (models_running_range[_id]["max"], model_max.max(dim=0).values), dim=0).max(dim=0).values
+                    (models_running_range[_id]["max"], out.max(dim=1).values), dim=0).max(dim=0).values
 
                 _min, _max = models_running_range[_id]["min"], models_running_range[_id]["max"]
 
@@ -103,13 +80,28 @@ async def callback(block):
                 _model_range = full_dataset_models_range[model.id]
                 _min, _max = torch.FloatTensor(_model_range["min"]).to(
                     device), torch.FloatTensor(_model_range["max"]).to(device)
+            
+            # -- normalise before sending to Bela!! --
+            normalised_out = (out - _min.unsqueeze(1)) / (_max - _min).unsqueeze(1)
 
-            _avg = (_avg - _min) / (_max - _min)
-            _avg = _avg.detach().cpu().tolist()
+            for idx, feature in enumerate(normalised_out):  # send each feature to Bela
+                streamer.send_buffer(idx, 'f', seq_len, feature.tolist())
+                counter+=1
+                
+                if counter < num_blocks_to_compute_avg:
+                    streamer.send_buffer(trigger_idx, 'f', seq_len, seq_len*[0.0])
+                elif counter == num_blocks_to_compute_avg:
+                    streamer.send_buffer(trigger_idx, 'f', seq_len, trigger_width*[1.0] + (seq_len-trigger_width)*[0.0])
+                    counter = 0
 
+            model_avg = torch.cat(
+                (model_avg, normalised_out.mean(dim=1).unsqueeze(0)), dim=0)
+                            
+
+        if len(model_avg) == num_blocks_to_compute_avg:
             # -- gain --
+            _avg = model_avg.mean(dim=0).detach().cpu().tolist()
             # multiply the final averaged value by a tuned gain
-            gain = [1.35, 1.1, 1.5, 1.5]
             _avg = [a * g for a, g in zip(_avg, gain)]
 
             # -- map to model --
@@ -120,8 +112,9 @@ async def callback(block):
             # -- reset avg --
             model_avg = torch.empty(0).to(device)
 
-            print(model.id, _avg)
-
+            print(model.id,np.round(_avg, 4))
+            
+            
 streamer.start_streaming(vars, on_block_callback=callback)
 
 
