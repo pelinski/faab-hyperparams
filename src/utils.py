@@ -168,9 +168,17 @@ def get_device():
 def get_all_run_ids(path='src/models/trained'):
     return json.load(open(f'{path}/run_ids.json'))
 
+def get_sorted_models(path='src/models/trained',num_models=0):
+    sorted_models =  json.load(open(f'{path}/models_ordered_by_asc_loss.json'))
+    if num_models == 0:
+        num_models = len(sorted_models)
+    return sorted_models[:num_models]
+
 def load_config(_id, epochs=500, path='src/models/trained'):
-    config = json.load(open(f'{path}/transformer_run_{_id}_{epochs}.json'))
-    return config    
+    return json.load(open(f'{path}/transformer_run_{_id}_{epochs}.json'))    
+
+def load_train_loss(_id, epochs=500, path='src/models/trained'):
+    return json.load(open(f'{path}/transformer_run_{_id}_{epochs}_metrics.json'))["train_loss"]
 
 def load_model(_id, epochs=500, path='src/models/trained'):
     config = load_config(_id, epochs, path)
@@ -180,6 +188,35 @@ def load_model(_id, epochs=500, path='src/models/trained'):
     model.eval()
 
     return model
+
+def get_models_coordinates(path='src/models/trained', sorted=True, num_models=0):
+    scaled_params = json.load(open(f'{path}/scaled_params.json'))
+    if not sorted:
+        return scaled_params
+    sorted_models = get_sorted_models(path, num_models=num_models)
+    sorted_scaled_params = {key: scaled_params[key] for key in sorted_models}
+    return sorted_scaled_params
+
+def get_models_range(path='src/models/trained'):
+    return json.load(open(f'{path}/models_range.json'))
+
+def find_closest_model(output_coordinates, scaled_model_coordinates):
+    
+    model_keys = list(scaled_model_coordinates.keys())
+    scaled_model_coordinates = np.array(list(scaled_model_coordinates.values()))
+    
+    # Calculate the Euclidean distances
+    distances = np.linalg.norm(scaled_model_coordinates - output_coordinates, axis=1)
+
+    # Find the index of the row with the smallest distance
+    closest_row_index = np.argmin(distances)
+
+    # Closest row
+    closest_model = model_keys[closest_row_index]
+    closest_model_coordinates = scaled_model_coordinates[closest_row_index]
+    
+    return closest_model, closest_model_coordinates
+
 
 def _scale_params(epochs=500, path='src/models/trained',):
     """Maps the hyperparameters of the trained models to a 0-1 scale.
@@ -222,26 +259,3 @@ def _scale_params(epochs=500, path='src/models/trained',):
             
     scaled_model_coordinates = {index: row.tolist() for index, row in df.iterrows()}
     return scaled_model_coordinates
-
-def get_models_coordinates(path='src/models/trained'):
-    return json.load(open(f'{path}/scaled_params.json'))
-
-def get_models_range(path='src/models/trained'):
-    return json.load(open(f'{path}/models_range.json'))
-
-def find_closest_model(output_coordinates, scaled_model_coordinates):
-    
-    model_keys = list(scaled_model_coordinates.keys())
-    scaled_model_coordinates = np.array(list(scaled_model_coordinates.values()))
-    
-    # Calculate the Euclidean distances
-    distances = np.linalg.norm(scaled_model_coordinates - output_coordinates, axis=1)
-
-    # Find the index of the row with the smallest distance
-    closest_row_index = np.argmin(distances)
-
-    # Closest row
-    closest_model = model_keys[closest_row_index]
-    closest_model_coordinates = scaled_model_coordinates[closest_row_index]
-    
-    return closest_model, closest_model_coordinates
