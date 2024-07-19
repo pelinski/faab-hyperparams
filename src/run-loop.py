@@ -8,7 +8,7 @@ from utils import load_model, get_device, get_sorted_models, get_models_coordina
 
 
 class CallbackState:
-    def __init__(self, seq_len, num_models, num_blocks_to_compute_avg, num_blocks_to_compute_std, filter,  num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm):
+    def __init__(self, seq_len, num_models, num_blocks_to_compute_avg, num_blocks_to_compute_std, filter,  num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out):
 
         # -- params --
         self.seq_len = seq_len
@@ -23,6 +23,7 @@ class CallbackState:
         self.trigger_width = trigger_width
         self.trigger_idx = trigger_idx
         self.running_norm = running_norm
+        self.permute_out = permute_out
         self.device = get_device()
 
         # init models
@@ -55,8 +56,10 @@ class CallbackState:
         self.bridge_piezo_avg = deque(maxlen=num_blocks_to_compute_avg)
         self.model_out_std = deque(maxlen=num_blocks_to_compute_std)
         self.debug_counter = 0
+        self.model_perm = [0,1,2,3]
 
 # sound_threshold =0.021
+
 
 streamer = Streamer()
 streamer.connect()
@@ -75,9 +78,9 @@ cs = CallbackState(
     threshold_leak=0.1,
     trigger_width=25,
     trigger_idx=4,
-    running_norm=True
+    running_norm=True,
+    permute_out=False
 )
-
 
 
 async def callback(block):
@@ -98,7 +101,6 @@ async def callback(block):
             # outputs --> [ff_size, num_heads, num_layers, learning_rate]
 
             # -- normalisation --
-
             # running normalisation (taking max and min from the current run)
             if cs.running_norm:
                 cs.models_running_range[cs.model.id]["min"] = torch.stack(
@@ -117,7 +119,11 @@ async def callback(block):
             # -- normalise before sending to Bela!! --
             normalised_out = (out - _min.unsqueeze(1)) / \
                 (_max - _min).unsqueeze(1)
-
+            
+            # permute output 
+            if cs.permute_out:
+                normalised_out = normalised_out[cs.model_perm]
+            
             # send each feature to Bela
             for idx, feature in enumerate(normalised_out):
                 streamer.send_buffer(idx, 'f', cs.seq_len, feature.tolist())
@@ -125,8 +131,8 @@ async def callback(block):
             # -- amplitude --
             _bridge_piezo = cs.filter(block[5]["buffer"]["data"])
             cs.bridge_piezo_avg.append(np.average(_bridge_piezo))
-            weighted_avg_bridge_piezo = np.round(np.average(
-                cs.bridge_piezo_avg, weights=range(1, len(cs.bridge_piezo_avg)+1)), 5)
+            weighted_avg_bridge_piezo = np.average(
+                cs.bridge_piezo_avg, weights=range(1, len(cs.bridge_piezo_avg)+1))
 
             # -- model variance --
             cs.model_out_std.append(normalised_out.std(dim=1).mean().item())
@@ -141,6 +147,7 @@ async def callback(block):
                 cs.ratio_rising_threshold -= cs.threshold_leak
                 cs.ratio_falling_threshold += cs.threshold_leak
 
+            # is it time to change model?
             ratio = weighted_model_out_std / weighted_avg_bridge_piezo
             if (ratio > cs.ratio_rising_threshold and past_change_model == 0):
                 cs.change_model = 1
@@ -151,6 +158,7 @@ async def callback(block):
             if (cs.debug_counter % 20 == 0):
                 print(ratio)
 
+            # if it's time to change model...
             if (past_change_model == 0 and cs.change_model == 1):
                 # high sound amplitude and model has low variance --> change model
                 # streamer.send_buffer(
@@ -164,6 +172,10 @@ async def callback(block):
                 closest_model, _ = find_closest_model(
                     out_coordinates, cs.models_coordinates)
                 cs.model = cs.models[closest_model]
+                if cs.permute_out:
+                    cs.model_perm = torch.randperm(4)
+
+                # reset counter and thresholds
                 cs.iterations_in_this_model_counter = 0
                 cs.ratio_rising_threshold, cs.ratio_falling_threshold = cs.init_ratio_rising_threshold, cs.init_ratio_falling_threshold
 
