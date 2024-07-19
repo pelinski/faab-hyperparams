@@ -54,6 +54,16 @@ change_model = 0
 filter = biquad.lowpass(sr=streamer.sample_rate, f=1, q=0.707)
 gain = 4*[1.0]
 # sound_threshold =0.021
+init_ratio_rising_threshold, init_ratio_falling_threshold = 2.5, 1.3  # 0.15, 0.1
+ratio_rising_threshold, ratio_falling_threshold = init_ratio_rising_threshold, init_ratio_falling_threshold
+threshold_leak = 0.1
+num_of_iterations_in_this_model_check = 20
+
+# counters
+debug_counter = 0
+iterations_in_this_model_counter = 0
+
+
 # ratio_rising, ratio_falling = 0.15, 0.1
 ratio_rising, ratio_falling = 2.5, 1.3
 counter = 0
@@ -62,7 +72,7 @@ counter = 0
 async def callback(block):
 
     # global variables so that the state is kept between callback calls
-    global model_out_std, bridge_piezo_avg, model, gain, change_model, counter
+    global model_out_std, bridge_piezo_avg, model, gain, change_model, ratio_rising_threshold, ratio_falling_threshold, iterations_in_this_model_counter, debug_counter
 
     with torch.no_grad():
 
@@ -74,6 +84,7 @@ async def callback(block):
 
         # for each sequence of seq_len, feed it into the model
         for _input in inputs:
+            iterations_in_this_model_counter += 1
             out = model.forward_encoder(_input.to(device)).permute(
                 1, 0)  # num_outputs, seq_len
             # outputs --> [ff_size, num_heads, num_layers, learning_rate]
@@ -116,33 +127,43 @@ async def callback(block):
 
             # -- model change --
             past_change_model = change_model
+
+            # leaky threshold
+            if iterations_in_this_model_counter % num_of_iterations_in_this_model_check == 0:
+                ratio_rising_threshold -= threshold_leak
+                ratio_falling_threshold += threshold_leak
+
             ratio = weighted_model_out_std / weighted_avg_bridge_piezo
-            if (ratio > ratio_rising and past_change_model == 0):
+            if (ratio > ratio_rising_threshold and past_change_model == 0):
                 change_model = 1
-            elif (ratio < ratio_falling and past_change_model == 1):
+            elif (ratio < ratio_falling_threshold and past_change_model == 1):
                 change_model = 0
 
-            counter += 1
-            # if (counter % 50 ==0):
-            #     print(ratio)
+            debug_counter += 1  # for debugging
+            if (debug_counter % 20 == 0):
+                print(ratio)
 
             if (past_change_model == 0 and change_model == 1):
                 # high sound amplitude and model has low variance --> change model
-                streamer.send_buffer(
-                    trigger_idx, 'f', seq_len, trigger_width*[1.0] + (seq_len-trigger_width)*[0.0])
+                # streamer.send_buffer(
+                #     trigger_idx, 'f', seq_len, trigger_width*[1.0] + (seq_len-trigger_width)*[0.0])  # change trigger
 
                 out_coordinates = normalised_out[:, -1].detach().cpu().tolist()
                 out_coordinates = [c * g for c,
                                    g in zip(out_coordinates, gain)]
 
                 # find the closest model to the out_ coordinates
-                closest_model, _ = find_closest_model(
-                    out_coordinates, models_coordinates)
+                closest_model, _ = find_closest_model(out_coordinates, models_coordinates)
                 model = models[closest_model]
+                iterations_in_this_model_counter = 0
+                ratio_rising_threshold, ratio_falling_threshold = init_ratio_rising_threshold, init_ratio_falling_threshold
 
                 print(model.id, np.round(out_coordinates, 4))
+
             else:
-                streamer.send_buffer(trigger_idx, 'f', seq_len, seq_len*[0.0])
+                pass
+                # streamer.send_buffer(
+                #     trigger_idx, 'f', seq_len, seq_len*[0.0])  # change trigger
 
 
 streamer.start_streaming(vars, on_block_callback=callback)

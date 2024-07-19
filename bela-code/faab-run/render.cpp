@@ -10,12 +10,12 @@
 #define MAX_EXPECTED_BUFFER_SIZE 512
 
 std::vector<Watcher<float>*> gFaabWatchers;
-std::vector<std::vector<float>> circularBuffers(NUM_OUTPUTS + 1); // +1 for the modelUpdateClock
+std::vector<std::vector<float>> circularBuffers(NUM_OUTPUTS); // +1 for the modelUpdateClock
 
 size_t circularBufferSize = 30 * 1024;
 size_t prefillSize = 2.5 * 1024;
-uint32_t circularBufferWriteIndex[NUM_OUTPUTS + 1] = {0};
-uint32_t circularBufferReadIndex[NUM_OUTPUTS + 1] = {0};
+uint32_t circularBufferWriteIndex[NUM_OUTPUTS] = {0};
+uint32_t circularBufferReadIndex[NUM_OUTPUTS] = {0};
 
 struct ReceivedBuffer {
     uint32_t bufferId;
@@ -32,7 +32,7 @@ uint64_t totalReceivedCount;
 //     uint32_t guiBufferId; // we're actually ignoring these
 //     uint64_t count;
 // };
-// CallbackBufferCount callbackBufferCounts[NUM_OUTPUTS + 1];
+// CallbackBufferCount callbackBufferCounts[NUM_OUTPUTS];
 
 unsigned int gAudioFramesPerAnalogFrame;
 
@@ -61,7 +61,7 @@ bool binaryDataCallback(const std::string& addr, const WSServerDetails* id, cons
     // }
 
     int _id = receivedBuffer.bufferId;
-    if (_id >= 0 && _id < NUM_OUTPUTS + 1) {
+    if (_id >= 0 && _id < NUM_OUTPUTS) {
         // callbackBufferCounts[_id].count++;
         for (size_t i = 0; i < receivedBuffer.bufferLen; ++i) {
             circularBuffers[_id][circularBufferWriteIndex[_id]] = receivedBuffer.bufferData[i];
@@ -91,7 +91,7 @@ bool setup(BelaContext* context, void* userData) {
     }
 
     // output buffers init
-    for (int i = 0; i < NUM_OUTPUTS + 1; ++i) {
+    for (int i = 0; i < NUM_OUTPUTS; ++i) {
         // callbackBufferCounts[i].guiBufferId =
         Bela_getDefaultWatcherManager()->getGui().setBuffer('f', MAX_EXPECTED_BUFFER_SIZE);
         // callbackBufferCounts[i].count = 0;
@@ -109,14 +109,14 @@ bool setup(BelaContext* context, void* userData) {
 
     receivedBuffer.bufferData.reserve(MAX_EXPECTED_BUFFER_SIZE);
 
-    schmittGate = 0.0;
-    lpFilter.setup({
-        .fs = context->audioSampleRate/gAudioFramesPerAnalogFrame,
-        .type = BiquadCoeff::lowpass,
-        .cutoff = lpFilterCutoff,
-        .q = 0.707,
-        .peakGainDb = 3,
-    });
+    // schmittGate = 0.0;
+    // lpFilter.setup({
+    //     .fs = context->audioSampleRate/gAudioFramesPerAnalogFrame,
+    //     .type = BiquadCoeff::lowpass,
+    //     .cutoff = lpFilterCutoff,
+    //     .q = 0.707,
+    //     .peakGainDb = 3,
+    // });
 
     return true;
 }
@@ -134,7 +134,7 @@ void render(BelaContext* context, void* userData) {
             }
 
             // analog outputs
-            for (unsigned int i = 0; i < NUM_OUTPUTS + 1; i++) {
+            for (unsigned int i = 0; i < NUM_OUTPUTS; i++) {
                 analogWrite(context, n, i, circularBuffers[i][circularBufferReadIndex[i]]);
                 if (totalReceivedCount > 0 && (circularBufferReadIndex[i] + 1) % circularBufferSize != circularBufferWriteIndex[i]) {
                     circularBufferReadIndex[i] = (circularBufferReadIndex[i] + 1) % circularBufferSize;
@@ -150,7 +150,7 @@ void render(BelaContext* context, void* userData) {
             // } else if (filteredAudio < fallingThreshold) {
             //     schmittGate = 0.0;
             // }
-            // analogWrite(context, n, NUM_OUTPUTS + 1, schmittGate);
+            // analogWrite(context, n, NUM_OUTPUTS, schmittGate);
         }
     }
 }
