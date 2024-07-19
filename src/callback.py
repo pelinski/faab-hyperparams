@@ -8,7 +8,7 @@ from utils import load_model, get_device, get_sorted_models, get_models_coordina
 
 
 class CallbackState:
-    def __init__(self, seq_len, num_models, num_blocks_to_compute_avg, num_blocks_to_compute_std, filter,  num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out):
+    def __init__(self, seq_len, num_models, num_blocks_to_compute_avg, num_blocks_to_compute_std, filter,  num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path):
 
         # -- params --
         self.seq_len = seq_len
@@ -25,9 +25,10 @@ class CallbackState:
         self.running_norm = running_norm
         self.permute_out = permute_out
         self.device = get_device()
+        self.path = path
 
         # init models
-        path = "src/models/trained"
+
         # preload models
         # models in desc order of train loss, take best 20
         sorted_models = get_sorted_models(path=path, num_models=num_models)
@@ -61,29 +62,7 @@ class CallbackState:
 # sound_threshold =0.021
 
 
-streamer = Streamer()
-streamer.connect()
-vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',
-        'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
-
-cs = CallbackState(
-    seq_len=512,
-    num_models=20,
-    num_blocks_to_compute_avg=10,
-    num_blocks_to_compute_std=40,
-    filter=biquad.lowpass(sr=streamer.sample_rate, f=1, q=0.707),
-    num_of_iterations_in_this_model_check=20,
-    init_ratio_rising_threshold=2.5,
-    init_ratio_falling_threshold=1.3,
-    threshold_leak=0.1,
-    trigger_width=25,
-    trigger_idx=4,
-    running_norm=True,
-    permute_out=False
-)
-
-
-async def callback(block):
+async def callback(block, cs, streamer):
 
     with torch.no_grad():
 
@@ -186,9 +165,33 @@ async def callback(block):
                 # streamer.send_buffer(
                 #     trigger_idx, 'f', seq_len, seq_len*[0.0])  # change trigger
 
+if __name__ == "__main__":
 
-streamer.start_streaming(vars, on_block_callback=callback)
+    streamer = Streamer()
+    streamer.connect()
+    vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',
+            'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
 
-async def wait_forever():
-    await asyncio.Future()
-asyncio.run(wait_forever())
+    cs = CallbackState(
+        seq_len=512,
+        num_models=20,
+        num_blocks_to_compute_avg=10,
+        num_blocks_to_compute_std=40,
+        filter=biquad.lowpass(sr=streamer.sample_rate, f=1, q=0.707),
+        num_of_iterations_in_this_model_check=20,
+        init_ratio_rising_threshold=2.5,
+        init_ratio_falling_threshold=1.3,
+        threshold_leak=0.1,
+        trigger_width=25,
+        trigger_idx=4,
+        running_norm=True,
+        permute_out=False,
+        path = "src/models/trained"
+    )
+
+
+    streamer.start_streaming(vars, on_block_callback=callback, callback_args=(cs,streamer))
+
+    async def wait_forever():
+        await asyncio.Future()
+    asyncio.run(wait_forever())

@@ -107,7 +107,6 @@ def load_hyperparams():
 
     return dict(hyperparams), args.hyperparameters
 
-
 def get_html_plot(outputs, targets, feature_names):
     """Plots model predictions and targets for a given batch in html
 
