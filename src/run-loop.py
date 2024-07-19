@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 import asyncio
+import biquad
+from collections import deque  # circular buffers
 from pybela import Streamer
 from utils import load_model, get_device, get_sorted_models, get_models_coordinates, find_closest_model, get_models_range
 
@@ -16,6 +18,7 @@ streamer.connect()
 seq_len = 512
 num_models = 20
 num_blocks_to_compute_avg = 10
+num_blocks_to_compute_std = 40
 trigger_width = 25
 trigger_idx = 4
 running_norm = True
@@ -38,21 +41,28 @@ models_coordinates = get_models_coordinates(
     path=path, sorted=True, num_models=num_models)
 
 
-# init average
-model_avg = torch.empty(0).to(device)
+# init averages
+bridge_piezo_avg, model_out_std = deque(
+    maxlen=num_blocks_to_compute_avg),  deque(maxlen=num_blocks_to_compute_std)
+
 # init model
-starter_id = sorted_models[0]
+starter_id = sorted_models[-1]  # h0o65m8s is nice
 model = models[starter_id]
+change_model = 0
 
 # settings
+filter = biquad.lowpass(sr=streamer.sample_rate, f=1, q=0.707)
 gain = 4*[1.0]
+# sound_threshold =0.021
+# ratio_rising, ratio_falling = 0.15, 0.1
+ratio_rising, ratio_falling = 2.5, 1.3
 counter = 0
 
 
 async def callback(block):
 
     # global variables so that the state is kept between callback calls
-    global model_avg, model_min, model_max, model, gain, counter
+    global model_out_std, bridge_piezo_avg, model, gain, change_model, counter
 
     with torch.no_grad():
 
@@ -92,34 +102,47 @@ async def callback(block):
             # send each feature to Bela
             for idx, feature in enumerate(normalised_out):
                 streamer.send_buffer(idx, 'f', seq_len, feature.tolist())
-                counter += 1
 
-                if counter < num_blocks_to_compute_avg:
-                    streamer.send_buffer(
-                        trigger_idx, 'f', seq_len, seq_len*[0.0])
-                elif counter == num_blocks_to_compute_avg:
-                    streamer.send_buffer(
-                        trigger_idx, 'f', seq_len, trigger_width*[1.0] + (seq_len-trigger_width)*[0.0])
-                    counter = 0
+            # -- amplitude --
+            _bridge_piezo = filter(block[5]["buffer"]["data"])
+            bridge_piezo_avg.append(np.average(_bridge_piezo))
+            weighted_avg_bridge_piezo = np.round(np.average(
+                bridge_piezo_avg, weights=range(1, len(bridge_piezo_avg)+1)), 5)
 
-            model_avg = torch.cat(
-                (model_avg, normalised_out.mean(dim=1).unsqueeze(0)), dim=0)
+            # -- model variance --
+            model_out_std.append(normalised_out.std(dim=1).mean().item())
+            weighted_model_out_std = np.average(
+                model_out_std, weights=range(1, len(model_out_std)+1))
 
-        if len(model_avg) == num_blocks_to_compute_avg:
-            # -- gain --
-            _avg = model_avg.mean(dim=0).detach().cpu().tolist()
-            # multiply the final averaged value by a tuned gain
-            _avg = [a * g for a, g in zip(_avg, gain)]
+            # -- model change --
+            past_change_model = change_model
+            ratio = weighted_model_out_std / weighted_avg_bridge_piezo
+            if (ratio > ratio_rising and past_change_model == 0):
+                change_model = 1
+            elif (ratio < ratio_falling and past_change_model == 1):
+                change_model = 0
 
-            # -- map to model --
-            # find the closest model to the _avg coordinates
-            closest_model, _ = find_closest_model(_avg, models_coordinates)
-            model = models[closest_model]
+            counter += 1
+            # if (counter % 50 ==0):
+            #     print(ratio)
 
-            # -- reset avg --
-            model_avg = torch.empty(0).to(device)
+            if (past_change_model == 0 and change_model == 1):
+                # high sound amplitude and model has low variance --> change model
+                streamer.send_buffer(
+                    trigger_idx, 'f', seq_len, trigger_width*[1.0] + (seq_len-trigger_width)*[0.0])
 
-            print(model.id, np.round(_avg, 4))
+                out_coordinates = normalised_out[:, -1].detach().cpu().tolist()
+                out_coordinates = [c * g for c,
+                                   g in zip(out_coordinates, gain)]
+
+                # find the closest model to the out_ coordinates
+                closest_model, _ = find_closest_model(
+                    out_coordinates, models_coordinates)
+                model = models[closest_model]
+
+                print(model.id, np.round(out_coordinates, 4))
+            else:
+                streamer.send_buffer(trigger_idx, 'f', seq_len, seq_len*[0.0])
 
 
 streamer.start_streaming(vars, on_block_callback=callback)
