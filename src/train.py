@@ -29,7 +29,7 @@ with wandb.init(project=hyperparameters["project"], config=hyperparameters,  set
         exit()
 
     train_dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=config.batch_size, shuffle=False)
+        dataset, batch_size=config.batch_size, shuffle=True)
 
     if config.model == "lstm":
         model = LSTM(feat_len=config.feat_len, feat_out_size=config.feat_len, ff_size=config.ff_size, num_layers=config.num_layers,

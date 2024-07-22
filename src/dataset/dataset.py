@@ -2,42 +2,60 @@ import torch
 import sys
 import pickle
 import numpy as np
+import os
+from tqdm import tqdm
 from pybela import Logger
 
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, pickle_path="", seq_len=0, device=torch.device("cpu"), n_items=0, normalise = False):
+    def __init__(self, pickle_path="", seq_len=0, hop_size=0, device=torch.device("cpu"), n_items=0, normalise=False):
         super().__init__()
         self.pickle_path = pickle_path
         self.device = device
-        self.timestamp =  pickle_path.split('/')[-1].split('_')[0]
+        self.timestamp = os.path.basename(pickle_path).split('_')[0]
 
         # self._seq_len = seq_len
         self.seq_len = seq_len
+        self.hop_size = hop_size
         # self._raw_data_tensor = None
         self.feature_names = []
         # self.raw_data = {}
         self.num_features = None
-        self.inputs = None
+        
+        with torch.no_grad():
 
-        if pickle_path != "" and seq_len != 0:
-            _raw_data = self.load_data_from_pickle(self.pickle_path)
-            self.num_features = len(_raw_data.keys())
-            self.feature_names = list(_raw_data.keys())
+            if pickle_path != "" and seq_len != 0:
+                _raw_data = self.load_data_from_pickle(self.pickle_path)
+                self.num_features = len(_raw_data.keys())
+                self.feature_names = list(_raw_data.keys())
 
-            _raw_data_tensor = self.process_raw_data_into_torch_tensor(
-                _raw_data)
-            self.inputs = _raw_data_tensor.unfold(
-                1, self.seq_len, self.seq_len).permute(1, 2, 0).to(self.device)  # n, seq_len, num_features
+                _raw_data_tensor = self.process_raw_data_into_torch_tensor(
+                    _raw_data).to(self.device)
+                
 
-            if n_items != 0:
-                assert n_items < len(
-                    self.inputs), "n_items must be less than the number of samples in the dataset"
-                self.inputs = self.inputs[:n_items+1]
+                if hop_size != 0:
+                    _num_points = _raw_data_tensor.shape[1]
+                    total_sequences = _num_points // self.hop_size - 1
+                    self.inputs = torch.empty((total_sequences, _raw_data_tensor.size(0), seq_len), device=self.device)
 
-            # normalise
-            if normalise:
-                self.inputs = self.normalise(self.inputs)
+                    for i in tqdm(range(_num_points//self.hop_size-1)):
+                        start_idx = i * hop_size
+                        end_idx = start_idx + seq_len
+                        self.inputs[i] = _raw_data_tensor[:, start_idx:end_idx]  # n, num_features,  num_points // hop_size
+                    self.inputs = self.inputs.permute(0, 2, 1).to(self.device) # n, num_points // hop_size,  num_features
+                else:
+                    self.inputs = _raw_data_tensor.unfold(
+                        1, self.seq_len, self.seq_len).permute(1, 2, 0).to(self.device)  # n, seq_len, num_features
+                
+                
+                if n_items != 0:
+                    assert n_items < len(
+                        self.inputs), "n_items must be less than the number of samples in the dataset"
+                    self.inputs = self.inputs[:n_items+1]
+
+                # normalise
+                if normalise:
+                    self.inputs = self.normalise(self.inputs)
 
     def process_raw_data_into_torch_tensor(self, _raw_data):
         _min_len = min([len(_raw_data[key])
@@ -63,9 +81,9 @@ class Dataset(torch.utils.data.Dataset):
     #     self.inputs = self._raw_data_tensor.unfold(
     #         1, self.seq_len, self.seq_len).permute(1, 2, 0).to(self.device)
     #     print("seq_len updated. inputs updated.")
-    
+
     # TODO denormalise function
-    
+
     def normalise(self, data):
         min_val = data.min()
         max_val = data.max()
@@ -109,53 +127,55 @@ class DatasetPred(Dataset):
     def __getitem__(self, idx):
         return self.inputs[idx], self.targets[idx]
 
+
 def convert_binary_dataset_to_dict(date, vars, save_as_pickle=True):
     data = {}
     raw_data = {}
 
     for var in vars:
-        _data = Logger().read_binary_file( f'data/{date}/{var}.bin', timestamp_mode="dense")
+        _data = Logger().read_binary_file(
+            f'data/{date}/{var}.bin', timestamp_mode="dense")
         raw_data[var] = _data
-        
+
         print(f"Processing {var}...")
-        
-        data[var] = [item for _buffer in _data["buffers"] for item in _buffer["data"]]
-        time = abs(raw_data[var]['buffers'][0]['ref_timestamp'] - raw_data[var]['buffers'][-1]['ref_timestamp'])/44100/60
-        
-        print(f'Processed {var} – {len(data[var])} points, {np.round(time,3)} min')
-        
+
+        data[var] = [item for _buffer in _data["buffers"]
+                     for item in _buffer["data"]]
+        time = abs(raw_data[var]['buffers'][0]['ref_timestamp'] -
+                   raw_data[var]['buffers'][-1]['ref_timestamp'])/44100/60
+
+        print(
+            f'Processed {var} – {len(data[var])} points, {np.round(time,3)} min')
+
     if save_as_pickle:
         filename = f'data/{date}/raw.pkl'
-        with open(filename, 'wb') as file: 
-            pickle.dump(data, file) 
-            
+        with open(filename, 'wb') as file:
+            pickle.dump(data, file)
+
     return data
-        
-        
-        
-    
-    
+
 
 if __name__ == "__main__":
-    seq_len = 512
+    seq_len = 1024
+    hop_size = 256
     n_features = 8
 
     data_path = sys.argv[1] if len(
-        sys.argv) > 1 else 'src/dataset/data/202407041315_raw.pkl'
-    
-    note = "" # REMEMBER TO ADD NOTES!!
-    
+        sys.argv) > 1 else 'src/dataset/data/07041536/07041536_raw.pkl'
+
+    # note = "" # REMEMBER TO ADD NOTES!!
+
     dataset = Dataset(
-        pickle_path=data_path, seq_len=seq_len, device="cpu")
-    first_item = dataset[0]
-    path = f'src/dataset/data/{dataset.timestamp}_processed_{seq_len}.pkl'
+        pickle_path=data_path, seq_len=seq_len, hop_size=hop_size, device="cuda")
+    # first_item = dataset[0]
+    path = f'src/dataset/data/{dataset.timestamp}_processed_{seq_len}_overlap_{hop_size}.pkl'
     with open(path, 'wb') as file:
         pickle.dump(dataset, file)
 
-    note_filename = f'{dataset.timestamp}_note.txt'
-    with open(f'src/dataset/data/{note_filename}', 'w') as file:
-        file.write(note)
-        
+    # note_filename = f'{dataset.timestamp}_note.txt'
+    # with open(f'src/dataset/data/{note_filename}', 'w') as file:
+    #     file.write(note)
+
     # dataset = Dataset(
     #     pickle_path=data_path, seq_len=seq_len, device="cpu", n_items=20)
     # first_item = dataset[0]

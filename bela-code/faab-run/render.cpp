@@ -36,11 +36,11 @@ uint64_t totalReceivedCount;
 
 unsigned int gAudioFramesPerAnalogFrame;
 
-Biquad lpFilter;                           // Biquad low-pass frequency;
-float lpFilterCutoff = 1.0;                // Cut-off frequency for low-pass filter (Hz)
-float risingThreshold = 0.021;               // Trigger to 1 above this threshold
-float fallingThreshold = 0.008;              // Trigger back to 0 below this threshold
-float schmittGate; // Schmitt trigger output
+Biquad lpFilter;                // Biquad low-pass frequency;
+float lpFilterCutoff = 1.0;     // Cut-off frequency for low-pass filter (Hz)
+float risingThreshold = 0.021;  // Trigger to 1 above this threshold
+float fallingThreshold = 0.008; // Trigger back to 0 below this threshold
+float schmittGate;              // Schmitt trigger output
 
 bool binaryDataCallback(const std::string& addr, const WSServerDetails* id, const unsigned char* data, size_t size, void* arg) {
 
@@ -138,9 +138,10 @@ void render(BelaContext* context, void* userData) {
                 analogWrite(context, n, i, circularBuffers[i][circularBufferReadIndex[i]]);
                 if (totalReceivedCount > 0 && (circularBufferReadIndex[i] + 1) % circularBufferSize != circularBufferWriteIndex[i]) {
                     circularBufferReadIndex[i] = (circularBufferReadIndex[i] + 1) % circularBufferSize;
-                } else if (totalReceivedCount > 0) {
-                    rt_printf("Buffer %d full\n", i);
                 }
+                // else if (totalReceivedCount > 0) {
+                //     rt_printf("Buffer %d full\n", i);
+                // }
             }
             // // if audio input, output gate on ch 5 - this does not seem to work
             // float audioL = audioRead(context, n/gAudioFramesPerAnalogFrame, 0);

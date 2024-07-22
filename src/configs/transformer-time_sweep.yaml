@@ -22,6 +22,8 @@ parameters:
     max: 0.001
   num_heads:
     values: [1, 2, 4]
+  comp_seq_len:
+    values: [32, 64, 128]
   num_layers:
     distribution: "int_uniform"
     min: 1

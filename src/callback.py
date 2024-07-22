@@ -26,6 +26,7 @@ class CallbackState:
         self.permute_out = permute_out
         self.device = get_device()
         self.path = path
+        self.sound_threshold = 0.021
 
         # init models
 
@@ -58,8 +59,6 @@ class CallbackState:
         self.model_out_std = deque(maxlen=num_blocks_to_compute_std)
         self.debug_counter = 0
         self.model_perm = [0,1,2,3]
-
-# sound_threshold =0.021
 
 
 async def callback(block, cs, streamer):
@@ -128,10 +127,11 @@ async def callback(block, cs, streamer):
 
             # is it time to change model?
             ratio = weighted_model_out_std / weighted_avg_bridge_piezo
-            if (ratio > cs.ratio_rising_threshold and past_change_model == 0):
-                cs.change_model = 1
-            elif (ratio < cs.ratio_falling_threshold and past_change_model == 1):
-                cs.change_model = 0
+            if (weighted_avg_bridge_piezo > cs.sound_threshold): # pnly leaky thresholds if sound
+                if (ratio > cs.ratio_rising_threshold and past_change_model == 0):
+                    cs.change_model = 1
+                elif (ratio < cs.ratio_falling_threshold and past_change_model == 1):
+                    cs.change_model = 0
 
             cs.debug_counter += 1  # for debugging
             if (cs.debug_counter % 20 == 0):
@@ -139,6 +139,7 @@ async def callback(block, cs, streamer):
 
             # if it's time to change model...
             if (past_change_model == 0 and cs.change_model == 1):
+                past_model = cs.model.id
                 # high sound amplitude and model has low variance --> change model
                 # streamer.send_buffer(
                 #     trigger_idx, 'f', seq_len, trigger_width*[1.0] + (seq_len-trigger_width)*[0.0])  # change trigger
@@ -151,7 +152,7 @@ async def callback(block, cs, streamer):
                 closest_model, _ = find_closest_model(
                     out_coordinates, cs.models_coordinates)
                 cs.model = cs.models[closest_model]
-                if cs.permute_out:
+                if cs.permute_out and past_model == cs.model.id:
                     cs.model_perm = torch.randperm(4)
 
                 # reset counter and thresholds
@@ -185,7 +186,7 @@ if __name__ == "__main__":
         trigger_width=25,
         trigger_idx=4,
         running_norm=True,
-        permute_out=False,
+        permute_out=True,
         path = "src/models/trained"
     )
 

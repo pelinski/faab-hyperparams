@@ -1,8 +1,8 @@
 project: "faab_autoencoder_transformer_time"
 # dataset parameters
-pickle_path: "07041536_processed_512.pkl"
+pickle_path: "07041536_processed_1024_overlap.pkl"
 pred: False
-seq_len: 512
+seq_len: 1024
 batch_size: 64
 
 # common model parameters
@@ -16,7 +16,7 @@ model: "transformer"
 num_heads: 2
 pe_scale_factor: 1
 mask: False
-comp_seq_len: 16
+comp_seq_len: 64
 
 # training parameters
 max_grad_norm: 0

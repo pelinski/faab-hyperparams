@@ -2,7 +2,7 @@ project: "faab_tautoencoder_test"
 # dataset parameters
 pickle_path: "src/dataset/data/07041536/processed_minitest_512.pkl"
 pred: False
-seq_len: 512
+seq_len: 1024
 batch_size: 5
 
 # common model parameters
@@ -16,7 +16,7 @@ model: "transformer"
 num_heads: 2
 pe_scale_factor: 0.3
 mask: False
-comp_seq_len: 32
+comp_seq_len: 128
 
 # training parameters
 max_grad_norm: 1
