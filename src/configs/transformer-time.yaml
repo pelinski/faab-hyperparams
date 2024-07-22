@@ -1,4 +1,4 @@
-project: "faab_autoencoder_transformer"
+project: "faab_autoencoder_transformer_time"
 # dataset parameters
 pickle_path: "07041536_processed_512.pkl"
 pred: False
@@ -16,6 +16,7 @@ model: "transformer"
 num_heads: 2
 pe_scale_factor: 1
 mask: False
+comp_seq_len: 16
 
 # training parameters
 max_grad_norm: 0

@@ -13,6 +13,7 @@ from models import TransformerAutoencoder
 
 # -- train loop --
 
+
 def load_hyperparams():
     """Loads hyperparameters from a config yaml file.
 
@@ -29,13 +30,15 @@ def load_hyperparams():
                         default="src/dataset/processed_dataset_512.pkl", type=str)
     parser.add_argument("--seq_len", help="maximum sequence length",
                         default=512, type=int)
+    parser.add_argument(
+        "--comp_seq_len", help="compressed sequence length", default=32, type=int)
     parser.add_argument("--pred", help="prediction task",
                         default=False, type=bool)
     parser.add_argument("--batch_size", help="batch size",
                         default=64, type=int)
-    parser.add_argument("--feat_in_size", help="feature input size",
+    parser.add_argument("--feat_len", help="feature input size",
                         default=8, type=int)
-    parser.add_argument("--d_model", help="model dimension",
+    parser.add_argument("--comp_feat_len", help="model dimension",
                         default=4, type=int)
     parser.add_argument("--ff_size", help="ff size",
                         default=12, type=int)
@@ -78,10 +81,11 @@ def load_hyperparams():
     hyperparams = {"project": hp["project"] if "project" in hp else args.project,
                    "pickle_path": hp["pickle_path"] if "pickle_path" in hp else args.pickle_path,
                    "seq_len": hp["seq_len"] if "seq_len" in hp else args.seq_len,
+                   "comp_seq_len": hp["comp_seq_len"] if "comp_seq_len" in hp else args.comp_seq_len,
                    "pred": hp["pred"] if "pred" in hp else args.pred,
                    "batch_size": hp["batch_size"] if "batch_size" in hp else args.batch_size,
-                   "feat_in_size": hp["feat_in_size"] if "feat_in_size" in hp else args.feat_in_size,
-                   "d_model": hp["d_model"] if "d_model" in hp else args.d_model,
+                   "feat_len": hp["feat_len"] if "feat_len" in hp else args.feat_len,
+                   "comp_feat_len": hp["comp_feat_len"] if "comp_feat_len" in hp else args.comp_feat_len,
                    "ff_size": hp["ff_size"] if "ff_size" in hp else args.ff_size,
                    "num_layers": hp["num_layers"] if "num_layers" in hp else args.num_layers,
                    "model": hp["model"] if "model" in hp else args.model,
@@ -106,6 +110,7 @@ def load_hyperparams():
         )
 
     return dict(hyperparams), args.hyperparameters
+
 
 def get_html_plot(outputs, targets, feature_names):
     """Plots model predictions and targets for a given batch in html
@@ -164,29 +169,38 @@ def get_html_plot(outputs, targets, feature_names):
 def get_device():
     return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+
 def get_all_run_ids(path='src/models/trained'):
     return json.load(open(f'{path}/run_ids.json'))
 
-def get_sorted_models(path='src/models/trained',num_models=0):
-    sorted_models =  json.load(open(f'{path}/models_ordered_by_asc_loss.json'))
+
+def get_sorted_models(path='src/models/trained', num_models=0):
+    sorted_models = json.load(open(f'{path}/models_ordered_by_asc_loss.json'))
     if num_models == 0:
         num_models = len(sorted_models)
     return sorted_models[:num_models]
 
+
 def load_config(_id, epochs=500, path='src/models/trained'):
-    return json.load(open(f'{path}/transformer_run_{_id}_{epochs}.json'))    
+    return json.load(open(f'{path}/transformer_run_{_id}_{epochs}.json'))
+
 
 def load_train_loss(_id, epochs=500, path='src/models/trained'):
     return json.load(open(f'{path}/transformer_run_{_id}_{epochs}_metrics.json'))["train_loss"]
 
+
 def load_model(_id, epochs=500, path='src/models/trained'):
     config = load_config(_id, epochs, path)
-    model = TransformerAutoencoder(d_model=config["d_model"], feat_in_size=config["feat_in_size"], num_heads=config["num_heads"], ff_size=config["ff_size"], dropout=config["dropout"], num_layers=config["num_layers"], max_len=config["seq_len"], pe_scale_factor=config["pe_scale_factor"], mask=config["mask"], id=_id)
-    model.load_state_dict(torch.load(f'{path}/transformer_run_{_id}_{epochs}.model' ))
+    model = TransformerAutoencoder(comp_feat_len=config["comp_feat_len"], feat_len=config["feat_len"], num_heads=config["num_heads"], ff_size=config["ff_size"],
+                                   dropout=config["dropout"], num_layers=config["num_layers"], seq_len=config["seq_len"],
+                                   comp_seq_len=config["comp_seq_len"], pe_scale_factor=config["pe_scale_factor"], mask=config["mask"], id=_id)
+    model.load_state_dict(torch.load(
+        f'{path}/transformer_run_{_id}_{epochs}.model'))
     model = model.to(get_device())
     model.eval()
 
     return model
+
 
 def get_models_coordinates(path='src/models/trained', sorted=True, num_models=0):
     scaled_params = json.load(open(f'{path}/scaled_params.json'))
@@ -196,16 +210,20 @@ def get_models_coordinates(path='src/models/trained', sorted=True, num_models=0)
     sorted_scaled_params = {key: scaled_params[key] for key in sorted_models}
     return sorted_scaled_params
 
+
 def get_models_range(path='src/models/trained'):
     return json.load(open(f'{path}/models_range.json'))
 
+
 def find_closest_model(output_coordinates, scaled_model_coordinates):
-    
+
     model_keys = list(scaled_model_coordinates.keys())
-    scaled_model_coordinates = np.array(list(scaled_model_coordinates.values()))
-    
+    scaled_model_coordinates = np.array(
+        list(scaled_model_coordinates.values()))
+
     # Calculate the Euclidean distances
-    distances = np.linalg.norm(scaled_model_coordinates - output_coordinates, axis=1)
+    distances = np.linalg.norm(
+        scaled_model_coordinates - output_coordinates, axis=1)
 
     # Find the index of the row with the smallest distance
     closest_row_index = np.argmin(distances)
@@ -213,7 +231,7 @@ def find_closest_model(output_coordinates, scaled_model_coordinates):
     # Closest row
     closest_model = model_keys[closest_row_index]
     closest_model_coordinates = scaled_model_coordinates[closest_row_index]
-    
+
     return closest_model, closest_model_coordinates
 
 
@@ -229,32 +247,33 @@ def _scale_params(epochs=500, path='src/models/trained',):
     """
     run_ids = get_all_run_ids(path)
     params = ["ff_size", "num_heads", "num_layers", "learning_rate"]
-    
+
     _id_config = {}
     for _id in run_ids:
-        _id_config[_id] = {key: load_config(_id, epochs, path)[key] for key in params}
-    
-    
+        _id_config[_id] = {key: load_config(_id, epochs, path)[
+            key] for key in params}
+
     ranges, mapped_ranges = {
         "ff_size": [8, 16, 32, 64, 128, 256],
         "num_heads": [1, 2, 4],
         "num_layers": [1, 2, 3, 4, 5, 6, 7, 8]
     }, {}
     for key in ranges:
-        mapped_ranges[key] = {value: idx /(len(ranges[key])-1) for idx, value in enumerate(ranges[key])}
-        
-        
+        mapped_ranges[key] = {
+            value: idx / (len(ranges[key])-1) for idx, value in enumerate(ranges[key])}
+
     # Apply a different function to each column
     df = pd.DataFrame.from_dict(_id_config, orient='index')
     column_functions = {
         "ff_size": lambda x: mapped_ranges["ff_size"][x],
         "num_heads": lambda x: mapped_ranges["num_heads"][x],
-        "num_layers": lambda x:mapped_ranges["num_layers"][x],
+        "num_layers": lambda x: mapped_ranges["num_layers"][x],
         "learning_rate": lambda x: x*1000
     }
     for column, func in column_functions.items():
         if column in df.columns:
             df[column] = df[column].apply(func)
-            
-    scaled_model_coordinates = {index: row.tolist() for index, row in df.iterrows()}
+
+    scaled_model_coordinates = {index: row.tolist()
+                                for index, row in df.iterrows()}
     return scaled_model_coordinates

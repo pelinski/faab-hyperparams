@@ -6,14 +6,14 @@ seq_len: 512
 batch_size: 5
 
 # common model parameters
-feat_in_size: 8 # feature size
-d_model: 4 # must be divisible by num_heads
+feat_len: 8 # feature size
+comp_feat_len: 4 # must be divisible by num_heads
 ff_size: 256
 num_layers: 4
 
 # model parameters transformer
 model: "transformer"
-num_heads: 2 
+num_heads: 2
 pe_scale_factor: 0.3
 mask: False
 

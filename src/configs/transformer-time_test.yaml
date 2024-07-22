@@ -1,28 +1,29 @@
-project: "faab_autoencoder_transformer"
+project: "faab_tautoencoder_test"
 # dataset parameters
-pickle_path: "07041536_processed_512.pkl"
+pickle_path: "src/dataset/data/07041536/processed_minitest_512.pkl"
 pred: False
 seq_len: 512
-batch_size: 64
+batch_size: 5
 
 # common model parameters
 feat_len: 8 # feature size
-comp_feat_len: 4
-ff_size: 12
+comp_feat_len: 4 # must be divisible by num_heads
+ff_size: 256
 num_layers: 4
 
 # model parameters transformer
 model: "transformer"
 num_heads: 2
-pe_scale_factor: 1
+pe_scale_factor: 0.3
 mask: False
+comp_seq_len: 32
 
 # training parameters
-max_grad_norm: 0
-dropout: 0
-epochs: 500
+max_grad_norm: 1
+dropout: 0.1
+epochs: 1
 optimizer: "rmsprop"
 learning_rate: 0.0001
-scheduler_step_size: 0
+scheduler_step_size: 200
 scheduler_gamma: 0.1
 plotter_samples: 5

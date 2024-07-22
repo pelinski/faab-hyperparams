@@ -32,11 +32,11 @@ with wandb.init(project=hyperparameters["project"], config=hyperparameters,  set
         dataset, batch_size=config.batch_size, shuffle=False)
 
     if config.model == "lstm":
-        model = LSTM(feat_in_size=config.feat_in_size, feat_out_size=config.feat_in_size, ff_size=config.ff_size, num_layers=config.num_layers,
-                     hidden_size=config.d_model, seq_len=config.seq_len, dropout=config.dropout, proj_size=config.proj_size).to(config.device)
+        model = LSTM(feat_len=config.feat_len, feat_out_size=config.feat_len, ff_size=config.ff_size, num_layers=config.num_layers,
+                     hidden_size=config.comp_feat_len, seq_len=config.seq_len, dropout=config.dropout, proj_size=config.proj_size).to(config.device)
     else:
-        model = TransformerAutoencoder(d_model=config.d_model, feat_in_size=config.feat_in_size, num_heads=config.num_heads, ff_size=config.ff_size,
-                                       dropout=config.dropout, num_layers=config.num_layers, max_len=config.seq_len, pe_scale_factor=config.pe_scale_factor, mask=config.mask).to(config.device)
+        model = TransformerAutoencoder(comp_feat_len=config.comp_feat_len, feat_len=config.feat_len, num_heads=config.num_heads, ff_size=config.ff_size,
+                                       dropout=config.dropout, num_layers=config.num_layers, seq_len=config.seq_len, comp_seq_len=config.comp_seq_len, pe_scale_factor=config.pe_scale_factor, mask=config.mask).to(config.device)
 
     if config.optimizer == "adam":
         optimizer = torch.optim.Adam(
