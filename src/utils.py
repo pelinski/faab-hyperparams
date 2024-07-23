@@ -170,26 +170,32 @@ def get_device():
     return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def get_all_run_ids(path='src/models/trained'):
+def get_all_run_ids(path='src/models/trained/transformer-autoencoder'):
     return json.load(open(f'{path}/run_ids.json'))
 
 
-def get_sorted_models(path='src/models/trained', num_models=0):
+def get_sorted_models(path='src/models/trained/transformer-autoencoder', num_models=0):
     sorted_models = json.load(open(f'{path}/models_ordered_by_asc_loss.json'))
     if num_models == 0:
         num_models = len(sorted_models)
     return sorted_models[:num_models]
 
 
-def load_config(_id, epochs=500, path='src/models/trained'):
+def load_config(_id, epochs=500, path='src/models/trained/transformer-autoencoder'):
     return json.load(open(f'{path}/transformer_run_{_id}_{epochs}.json'))
 
+def get_all_configs(path='src/models/trained/transformer-autoencoder', num_models=0, epoch=500):
+    sorted_models = get_sorted_models(path, num_models)
+    configs = {}
+    for _id in sorted_models:
+        configs[_id] = load_config(_id, epoch, path)
+    return configs
 
-def load_train_loss(_id, epochs=500, path='src/models/trained'):
+def load_train_loss(_id, epochs=500, path='src/models/trained/transformer-autoencoder'):
     return json.load(open(f'{path}/transformer_run_{_id}_{epochs}_metrics.json'))["train_loss"]
 
 
-def load_model(_id, epochs=500, path='src/models/trained'):
+def load_model(_id, epochs=500, path='src/models/trained/transformer-autoencoder'):
     config = load_config(_id, epochs, path)
     model = TransformerAutoencoder(comp_feat_len=config["comp_feat_len"], feat_len=config["feat_len"], num_heads=config["num_heads"], ff_size=config["ff_size"],
                                    dropout=config["dropout"], num_layers=config["num_layers"], seq_len=config["seq_len"],
@@ -202,7 +208,7 @@ def load_model(_id, epochs=500, path='src/models/trained'):
     return model
 
 
-def get_models_coordinates(path='src/models/trained', sorted=True, num_models=0):
+def get_models_coordinates(path='src/models/trained/transformer-autoencoder', sorted=True, num_models=0):
     scaled_params = json.load(open(f'{path}/scaled_params.json'))
     if not sorted:
         return scaled_params
@@ -211,7 +217,7 @@ def get_models_coordinates(path='src/models/trained', sorted=True, num_models=0)
     return sorted_scaled_params
 
 
-def get_models_range(path='src/models/trained'):
+def get_models_range(path='src/models/trained/transformer-autoencoder'):
     return json.load(open(f'{path}/models_range.json'))
 
 
@@ -235,12 +241,12 @@ def find_closest_model(output_coordinates, scaled_model_coordinates):
     return closest_model, closest_model_coordinates
 
 
-def _scale_params(epochs=500, path='src/models/trained',):
+def _scale_params(epochs=500, path='src/models/trained/transformer-autoencoder',):
     """Maps the hyperparameters of the trained models to a 0-1 scale.
 
     Args:
         epochs (int, optional): Epochs the model has been trained. Defaults to 500.
-        path (str, optional): Path where the models are. Defaults to 'src/models/trained'.
+        path (str, optional): Path where the models are. Defaults to 'src/models/trained/transformer-autoencoder'.
 
     Returns:
         dict of lists: Returns a dict with the scaled hyperparameters in the following order: ff_size, num_heads, num_layers, learning_rate

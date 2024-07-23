@@ -3,8 +3,9 @@ import numpy as np
 import asyncio
 import biquad
 from collections import deque  # circular buffers
+from scipy.interpolate import interp1d
 from pybela import Streamer
-from utils import load_model, get_device, get_sorted_models, get_models_coordinates, find_closest_model, get_models_range
+from utils import load_model, get_device, get_sorted_models, get_models_coordinates, find_closest_model, get_models_range, get_all_configs
 
 
 class CallbackState:
@@ -42,11 +43,16 @@ class CallbackState:
 
         # model space
         # min and max of model outputs (after passing the whole dataset)
-        self.full_dataset_models_range = get_models_range(path=path)
+        if not running_norm:
+            self.full_dataset_models_range = get_models_range(path=path)
+        else:
+            self.full_dataset_models_range = None
         # model's chosen 4 hyperparameters mapped to values between 0 and 1
         self.models_coordinates = get_models_coordinates(
             path=path, sorted=True, num_models=num_models)
         starter_id = sorted_models[-1]  # h0o65m8s is nice
+        
+        self.models_configs = get_all_configs(path=path, num_models=num_models, epoch=500)
 
         # variables for the callback
         self.model = self.models[starter_id]
@@ -58,7 +64,7 @@ class CallbackState:
         self.bridge_piezo_avg = deque(maxlen=num_blocks_to_compute_avg)
         self.model_out_std = deque(maxlen=num_blocks_to_compute_std)
         self.debug_counter = 0
-        self.model_perm = [0,1,2,3]
+        self.model_perm = [0, 1, 2, 3]
 
 
 async def callback(block, cs, streamer):
@@ -74,7 +80,7 @@ async def callback(block, cs, streamer):
         # for each sequence of seq_len, feed it into the model
         for _input in inputs:
             cs.iterations_in_this_model_counter += 1
-            out = cs.model.forward_encoder(_input.to(cs.device)).permute(
+            out = cs.model.forward_encoder(_input.to(cs.device)).squeeze().permute(
                 1, 0)  # num_outputs, seq_len
             # outputs --> [ff_size, num_heads, num_layers, learning_rate]
 
@@ -97,13 +103,22 @@ async def callback(block, cs, streamer):
             # -- normalise before sending to Bela!! --
             normalised_out = (out - _min.unsqueeze(1)) / \
                 (_max - _min).unsqueeze(1)
-            
-            # permute output 
+
+            # permute output
             if cs.permute_out:
                 normalised_out = normalised_out[cs.model_perm]
+                
+            if cs.seq_len == 1024:
+                original_indices = np.linspace(0,1, num=normalised_out.shape[1])
+                new_indices = np.linspace(0,1, num=cs.seq_len)
+                cubic_interpolator = interp1d(original_indices, normalised_out.detach().cpu(), kind='cubic', axis=1)
+                out_to_send = cubic_interpolator(new_indices)
             
+            else:
+                out_to_send = normalised_out
+
             # send each feature to Bela
-            for idx, feature in enumerate(normalised_out):
+            for idx, feature in enumerate(out_to_send):
                 streamer.send_buffer(idx, 'f', cs.seq_len, feature.tolist())
 
             # -- amplitude --
@@ -127,7 +142,7 @@ async def callback(block, cs, streamer):
 
             # is it time to change model?
             ratio = weighted_model_out_std / weighted_avg_bridge_piezo
-            if (weighted_avg_bridge_piezo > cs.sound_threshold): # pnly leaky thresholds if sound
+            if (weighted_avg_bridge_piezo > cs.sound_threshold):  # pnly leaky thresholds if sound
                 if (ratio > cs.ratio_rising_threshold and past_change_model == 0):
                     cs.change_model = 1
                 elif (ratio < cs.ratio_falling_threshold and past_change_model == 1):
@@ -174,7 +189,7 @@ if __name__ == "__main__":
             'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
 
     cs = CallbackState(
-        seq_len=512,
+        seq_len=1024,
         num_models=20,
         num_blocks_to_compute_avg=10,
         num_blocks_to_compute_std=40,
@@ -187,11 +202,11 @@ if __name__ == "__main__":
         trigger_idx=4,
         running_norm=True,
         permute_out=True,
-        path = "src/models/trained"
+        path="src/models/trained/transformer-autoencoder-time"
     )
 
-
-    streamer.start_streaming(vars, on_block_callback=callback, callback_args=(cs,streamer))
+    streamer.start_streaming(
+        vars, on_block_callback=callback, callback_args=(cs, streamer))
 
     async def wait_forever():
         await asyncio.Future()
