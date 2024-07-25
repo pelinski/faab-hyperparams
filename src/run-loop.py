@@ -4,7 +4,7 @@ import asyncio
 from pybela import Streamer
 from utils import load_model, get_device, get_all_run_ids, get_models_coordinates, find_closest_model, get_models_range
 
-path = "src/models/trained"
+path = "src/models/trained/transformer-autoencoder"
 device = get_device()
 
 streamer = Streamer()
