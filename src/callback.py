@@ -57,7 +57,7 @@ class CallbackState:
         self.bridge_piezo_avg = deque(maxlen=num_blocks_to_compute_avg)
         self.model_out_std = deque(maxlen=num_blocks_to_compute_std)
         self.debug_counter = 0
-        self.model_perm = [0,1,2,3]
+        self.model_perm = [0, 1, 2, 3]
 
 # sound_threshold =0.021
 
@@ -98,11 +98,11 @@ async def callback(block, cs, streamer):
             # -- normalise before sending to Bela!! --
             normalised_out = (out - _min.unsqueeze(1)) / \
                 (_max - _min).unsqueeze(1)
-            
-            # permute output 
+
+            # permute output
             if cs.permute_out:
                 normalised_out = normalised_out[cs.model_perm]
-            
+
             # send each feature to Bela
             for idx, feature in enumerate(normalised_out):
                 streamer.send_buffer(idx, 'f', cs.seq_len, feature.tolist())
@@ -186,11 +186,11 @@ if __name__ == "__main__":
         trigger_idx=4,
         running_norm=True,
         permute_out=False,
-        path = "src/models/trained"
+        path="src/models/trained/transformer-autoencoder"
     )
 
-
-    streamer.start_streaming(vars, on_block_callback=callback, callback_args=(cs,streamer))
+    streamer.start_streaming(
+        vars, on_block_callback=callback, callback_args=(cs, streamer))
 
     async def wait_forever():
         await asyncio.Future()
