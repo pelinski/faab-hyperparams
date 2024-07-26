@@ -20,6 +20,7 @@ pip-chill = "*"
 test = "python src/test.py"
 train = "python src/train.py"
 dataset = "python src/dataset/dataset.py"
+callback = "python src/run-loop.py"
 
 [requires]
 python_version = "3.9"
