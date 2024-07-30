@@ -192,7 +192,7 @@ def load_model(_id, epochs=500, path='src/models/trained'):
     model = TransformerAutoencoder(d_model=config["d_model"], feat_in_size=config["feat_in_size"], num_heads=config["num_heads"], ff_size=config["ff_size"],
                                    dropout=config["dropout"], num_layers=config["num_layers"], max_len=config["seq_len"], pe_scale_factor=config["pe_scale_factor"], mask=config["mask"], id=_id)
     model.load_state_dict(torch.load(
-        f'{path}/transformer_run_{_id}_{epochs}.model') map_location=get_device()))
+        f'{path}/transformer_run_{_id}_{epochs}.model'), map_location=get_device()))
     model = model.to(get_device())
     model.eval()
 
