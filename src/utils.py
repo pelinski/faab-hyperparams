@@ -13,6 +13,11 @@ from models import TransformerAutoencoder
 
 # -- train loop --
 
+
+def get_device():
+    return torch.device("mps" if torch.backends.mps.is_available() else "cuda:0" if torch.cuda.is_available() else "cpu")
+
+
 def load_hyperparams():
     """Loads hyperparameters from a config yaml file.
 
@@ -94,7 +99,7 @@ def load_hyperparams():
                    "scheduler_gamma": hp["scheduler_gamma"] if "scheduler_gamma" in hp else args.scheduler_gamma,
                    "num_encoder_layers": hp["num_encoder_layers"] if "num_encoder_layers" in hp else args.num_encoder_layers,
                    "plotter_samples": hp["plotter_samples"] if "plotter_samples" in hp else args.plotter_samples,
-                   "device": torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+                   "device": get_device()
                    }
     if hyperparams["model"] == "transformer":
         hyperparams.update(
@@ -106,6 +111,7 @@ def load_hyperparams():
         )
 
     return dict(hyperparams), args.hyperparameters
+
 
 def get_html_plot(outputs, targets, feature_names):
     """Plots model predictions and targets for a given batch in html
@@ -161,32 +167,37 @@ def get_html_plot(outputs, targets, feature_names):
 
 
 # -- run loop --
-def get_device():
-    return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def get_all_run_ids(path='src/models/trained'):
     return json.load(open(f'{path}/run_ids.json'))
 
-def get_sorted_models(path='src/models/trained',num_models=0):
-    sorted_models =  json.load(open(f'{path}/models_ordered_by_asc_loss.json'))
+
+def get_sorted_models(path='src/models/trained', num_models=0):
+    sorted_models = json.load(open(f'{path}/models_ordered_by_asc_loss.json'))
     if num_models == 0:
         num_models = len(sorted_models)
     return sorted_models[:num_models]
 
+
 def load_config(_id, epochs=500, path='src/models/trained'):
-    return json.load(open(f'{path}/transformer_run_{_id}_{epochs}.json'))    
+    return json.load(open(f'{path}/transformer_run_{_id}_{epochs}.json'))
+
 
 def load_train_loss(_id, epochs=500, path='src/models/trained'):
     return json.load(open(f'{path}/transformer_run_{_id}_{epochs}_metrics.json'))["train_loss"]
 
+
 def load_model(_id, epochs=500, path='src/models/trained'):
     config = load_config(_id, epochs, path)
-    model = TransformerAutoencoder(d_model=config["d_model"], feat_in_size=config["feat_in_size"], num_heads=config["num_heads"], ff_size=config["ff_size"], dropout=config["dropout"], num_layers=config["num_layers"], max_len=config["seq_len"], pe_scale_factor=config["pe_scale_factor"], mask=config["mask"], id=_id)
-    model.load_state_dict(torch.load(f'{path}/transformer_run_{_id}_{epochs}.model' ))
+    model = TransformerAutoencoder(d_model=config["d_model"], feat_in_size=config["feat_in_size"], num_heads=config["num_heads"], ff_size=config["ff_size"],
+                                   dropout=config["dropout"], num_layers=config["num_layers"], max_len=config["seq_len"], pe_scale_factor=config["pe_scale_factor"], mask=config["mask"], id=_id)
+    model.load_state_dict(torch.load(
+        f'{path}/transformer_run_{_id}_{epochs}.model'), map_location=get_device())
     model = model.to(get_device())
     model.eval()
 
     return model
+
 
 def get_models_coordinates(path='src/models/trained', sorted=True, num_models=0):
     scaled_params = json.load(open(f'{path}/scaled_params.json'))
@@ -196,16 +207,20 @@ def get_models_coordinates(path='src/models/trained', sorted=True, num_models=0)
     sorted_scaled_params = {key: scaled_params[key] for key in sorted_models}
     return sorted_scaled_params
 
+
 def get_models_range(path='src/models/trained'):
     return json.load(open(f'{path}/models_range.json'))
 
+
 def find_closest_model(output_coordinates, scaled_model_coordinates):
-    
+
     model_keys = list(scaled_model_coordinates.keys())
-    scaled_model_coordinates = np.array(list(scaled_model_coordinates.values()))
-    
+    scaled_model_coordinates = np.array(
+        list(scaled_model_coordinates.values()))
+
     # Calculate the Euclidean distances
-    distances = np.linalg.norm(scaled_model_coordinates - output_coordinates, axis=1)
+    distances = np.linalg.norm(
+        scaled_model_coordinates - output_coordinates, axis=1)
 
     # Find the index of the row with the smallest distance
     closest_row_index = np.argmin(distances)
@@ -213,7 +228,7 @@ def find_closest_model(output_coordinates, scaled_model_coordinates):
     # Closest row
     closest_model = model_keys[closest_row_index]
     closest_model_coordinates = scaled_model_coordinates[closest_row_index]
-    
+
     return closest_model, closest_model_coordinates
 
 
@@ -229,32 +244,33 @@ def _scale_params(epochs=500, path='src/models/trained',):
     """
     run_ids = get_all_run_ids(path)
     params = ["ff_size", "num_heads", "num_layers", "learning_rate"]
-    
+
     _id_config = {}
     for _id in run_ids:
-        _id_config[_id] = {key: load_config(_id, epochs, path)[key] for key in params}
-    
-    
+        _id_config[_id] = {key: load_config(_id, epochs, path)[
+            key] for key in params}
+
     ranges, mapped_ranges = {
         "ff_size": [8, 16, 32, 64, 128, 256],
         "num_heads": [1, 2, 4],
         "num_layers": [1, 2, 3, 4, 5, 6, 7, 8]
     }, {}
     for key in ranges:
-        mapped_ranges[key] = {value: idx /(len(ranges[key])-1) for idx, value in enumerate(ranges[key])}
-        
-        
+        mapped_ranges[key] = {
+            value: idx / (len(ranges[key])-1) for idx, value in enumerate(ranges[key])}
+
     # Apply a different function to each column
     df = pd.DataFrame.from_dict(_id_config, orient='index')
     column_functions = {
         "ff_size": lambda x: mapped_ranges["ff_size"][x],
         "num_heads": lambda x: mapped_ranges["num_heads"][x],
-        "num_layers": lambda x:mapped_ranges["num_layers"][x],
+        "num_layers": lambda x: mapped_ranges["num_layers"][x],
         "learning_rate": lambda x: x*1000
     }
     for column, func in column_functions.items():
         if column in df.columns:
             df[column] = df[column].apply(func)
-            
-    scaled_model_coordinates = {index: row.tolist() for index, row in df.iterrows()}
+
+    scaled_model_coordinates = {index: row.tolist()
+                                for index, row in df.iterrows()}
     return scaled_model_coordinates
