@@ -10,9 +10,9 @@ pipenv install
 pipenv run pip3 install torch # --index-url https://download.pytorch.org/whl/cu117 # for g15
 ```
 
-# 2. Change Bela branch to `def`
+# 2. Change Bela branch to `dev`
 
-Follow the instructions [here]. This is necessary for `pybela` to work.
+Follow the instructions [here](https://github.com/BelaPlatform/pybela?tab=readme-ov-file#2-set-the-bela-branch-to-dev). This is necessary for `pybela` to work.
 
 # 3. Copy the `faab-run` project to bela
 
