@@ -4,7 +4,7 @@ import asyncio
 import biquad
 from collections import deque  # circular buffers
 from pybela import Streamer
-from utils import load_model, get_device, get_sorted_models, get_models_coordinates, find_closest_model, get_models_range
+from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, find_closest_model, get_models_range
 
 
 class CallbackState:

@@ -13,3 +13,4 @@ src/models/trained/*
 log*
 .clang-format
 src/__pycache__/*
+dev/*

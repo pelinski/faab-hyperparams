@@ -5,7 +5,7 @@ import numpy as np
 from tqdm import tqdm
 from models import TransformerAutoencoder, LSTM
 from dataset import Dataset, DatasetPred
-from utils import get_html_plot, load_hyperparams
+from src.utils.utils import get_html_plot, load_hyperparams
 
 
 hyperparameters, hp_path = load_hyperparams()

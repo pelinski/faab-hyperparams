@@ -4,22 +4,20 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-pybela = {ref = "dev", git = "https://github.com/BelaPlatform/pybela.git"}
 wandb = "==0.16"
 matplotlib = "*"
 bokeh = "==2.4.3"
 pandas = "*"
 ipykernel = "*"
-numpy = "==1.26.2"
 seaborn = "*"
 ipywidgets = "*"
 biquad = "*"
+pybela = "==1.0.0"
 
 [dev-packages]
 pip-chill = "*"
 
 [scripts]
-test = "python src/test.py"
 train = "python src/train.py"
 dataset = "python src/dataset/dataset.py"
 callback = "python src/callback.py"
