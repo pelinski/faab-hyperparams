@@ -5,22 +5,19 @@ name = "pypi"
 
 [packages]
 wandb = "==0.16"
-matplotlib = "*"
-bokeh = "==2.4.3"
-pandas = "*"
-ipykernel = "*"
-seaborn = "*"
-ipywidgets = "*"
-biquad = "*"
-pybela = "==1.0.0"
+pandas = "==2.2.3"
+biquad = "==0.4"
+pybela = "==1.0.2"
 
 [dev-packages]
 pip-chill = "*"
+pipdeptree = "*"
 
 [scripts]
 train = "python src/train.py"
 dataset = "python src/dataset/dataset.py"
 callback = "python src/callback.py"
+requires = "pip-chill --no-chill -v" # > requirements.txt
 
 [requires]
-python_version = "3.9"
+python_version = "3.10"
