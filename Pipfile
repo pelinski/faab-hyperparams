@@ -8,6 +8,7 @@ wandb = "==0.16"
 pandas = "==2.2.3"
 biquad = "==0.4"
 pybela = "==1.0.2"
+python-osc = "*"
 
 [dev-packages]
 pip-chill = "*"
@@ -17,6 +18,8 @@ pipdeptree = "*"
 train = "python src/train.py"
 dataset = "python src/dataset/dataset.py"
 callback = "python src/callback.py"
+callback-osc = "python src/callback-w-osc-send.py"
+
 requires = "pip-chill --no-chill -v" # > requirements.txt
 
 [requires]

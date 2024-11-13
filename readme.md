@@ -1,8 +1,10 @@
-# faab
+# faab-ai-mami
 
 this code has been tested with Bela at `dev` commit `71a6e62a`
 
-# 0. Install pipenv
+# Setup
+
+## 0. Install pipenv
 
 This project uses `pipenv` to manage the dependencies.
 
@@ -10,7 +12,7 @@ This project uses `pipenv` to manage the dependencies.
 pip install pipenv
 ```
 
-# 1. Clone this repo on your computer
+## 1. Clone this repo on your computer
 
 ```bash
 git clone --recurse-submodules -j8  git@github.com:pelinski/faab.git
@@ -18,7 +20,7 @@ pipenv install
 pipenv run pip install torch # --index-url https://download.pytorch.org/whl/cu117 # for g15
 ```
 
-# 2. Change Bela branch to `dev`
+## 2. Change Bela branch to `dev`
 
 On your computer
 
@@ -38,7 +40,7 @@ git checkout tmp
 make -f Makefile.libraries cleanall && make coreclean
 ```
 
-# 3. Copy the `faab-run` project to Bela, compile it and run it
+## 3. Copy the `faab-run` project to Bela, compile it and run it
 
 With Bela connected to the computer, run the following command (in the computer) to copy the code to Bela:
 
@@ -52,10 +54,23 @@ now you can compile it:
 sh scripts/compile.sh faab-run
 ```
 
-# 4. Run the python code
+# Running the code
+
+The Bela code should be running from step 3. If it's not already running, either run the code from step 3 again or run the `faab-run` project from the Bela IDE.
+
+## for pepper
 
 Open a new terminal and run the following command:
 
 ```bash
 pipenv run callback
+```
+
+## with OSC + SuperCollider
+
+The SuperCollider code to receive the OSC messages is in the `supercollider` folder. Run it in SuperCollider.
+To run the python code, open a new terminal and run:
+
+```bash
+pipenv run callback-OSC
 ```
