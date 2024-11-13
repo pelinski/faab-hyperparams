@@ -112,12 +112,10 @@ async def callback(block, cs, streamer):
 
             # send each feature to Bela
             for idx, feature in enumerate(normalised_out):
-                streamer.send_buffer(idx, 'f', cs.seq_len, feature.tolist())
-
-                # if cs.osc_client:
-                #     cs.osc_client.send_message(f'/f{idx+1}', feature.tolist())
-                # else:
-                #     streamer.send_buffer(idx, 'f', cs.seq_len, feature.tolist())
+                if cs.osc_client:
+                    cs.osc_client.send_message(f'/f{idx+1}', feature.tolist())
+                else:
+                    streamer.send_buffer(idx, 'f', cs.seq_len, feature.tolist())
 
             # -- amplitude --
             _bridge_piezo = cs.filter(block[5]["buffer"]["data"])
