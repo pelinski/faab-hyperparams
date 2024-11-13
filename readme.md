@@ -72,5 +72,9 @@ The SuperCollider code to receive the OSC messages is in the `supercollider` fol
 To run the python code, open a new terminal and run:
 
 ```bash
-pipenv run callback-OSC
+pipenv run callback-osc
 ```
+
+# Troubleshooting
+
+for the Pepper mode, if you see "Buffer n full" in the Bela console, it means that the data is not being sent quickly enough to Bela. You can try increasing the latency by increasing `prefillSize` in the Bela code.

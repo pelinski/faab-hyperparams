@@ -18,7 +18,7 @@ pipdeptree = "*"
 train = "python src/train.py"
 dataset = "python src/dataset/dataset.py"
 callback = "python src/callback.py"
-callback-osc = "python src/callback-w-osc-send.py"
+callback-osc = "python src/callback.py --osc"
 
 requires = "pip-chill --no-chill -v" # > requirements.txt
 

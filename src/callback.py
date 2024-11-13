@@ -2,13 +2,14 @@ import torch
 import numpy as np
 import asyncio
 import biquad
+import argparse
 from collections import deque  # circular buffers
 from pybela import Streamer
+from pythonosc.udp_client import SimpleUDPClient
 from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, find_closest_model, get_models_range
 
-
 class CallbackState:
-    def __init__(self, seq_len, num_models, num_blocks_to_compute_avg, num_blocks_to_compute_std, filter,  num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path):
+    def __init__(self, seq_len, num_models, num_blocks_to_compute_avg, num_blocks_to_compute_std, filter,  num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None):
 
         # -- params --
         self.seq_len = seq_len
@@ -26,6 +27,12 @@ class CallbackState:
         self.permute_out = permute_out
         self.device = get_device()
         self.path = path
+        self.osc_ip, self.osc_port = osc_ip, osc_port
+        self.osc_client = None
+        
+        # init osc server 
+        if self.osc_ip and self.osc_port:
+            self.osc_client = SimpleUDPClient(self.osc_ip, self.osc_port)  
 
         # init models
 
@@ -107,6 +114,11 @@ async def callback(block, cs, streamer):
             for idx, feature in enumerate(normalised_out):
                 streamer.send_buffer(idx, 'f', cs.seq_len, feature.tolist())
 
+                # if cs.osc_client:
+                #     cs.osc_client.send_message(f'/f{idx+1}', feature.tolist())
+                # else:
+                #     streamer.send_buffer(idx, 'f', cs.seq_len, feature.tolist())
+
             # -- amplitude --
             _bridge_piezo = cs.filter(block[5]["buffer"]["data"])
             cs.bridge_piezo_avg.append(np.average(_bridge_piezo))
@@ -167,6 +179,14 @@ async def callback(block, cs, streamer):
 
 if __name__ == "__main__":
 
+    parser = argparse.ArgumentParser(description="Description of your script")
+    parser.add_argument('--osc', action='store_true', help='Use OSC server')
+    args = parser.parse_args()
+    if args.osc:
+        osc_ip, osc_port = "127.0.0.1", 2222
+    else:
+        osc_ip, osc_port = None, None
+    
     streamer = Streamer()
     streamer.connect()
     vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',
@@ -186,9 +206,12 @@ if __name__ == "__main__":
         trigger_idx=4,
         running_norm=True,
         permute_out=False,
-        path="src/models/trained/transformer-autoencoder"
+        path="src/models/trained/transformer-autoencoder",
+        osc_ip = osc_ip,
+        osc_port=osc_port
     )
 
+    
     streamer.start_streaming(
         vars, on_block_callback=callback, callback_args=(cs, streamer))
 
