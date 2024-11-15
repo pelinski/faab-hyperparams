@@ -2,6 +2,8 @@
 
 this code has been tested with Bela at `dev` commit `71a6e62a`
 
+if you have been given a microsd card by me, skip steps 2 and 3, open the Bela IDE (type `bela.local`in the browser) and run the `faab-run` project.
+
 # Setup
 
 ## 0. Install pipenv
@@ -54,7 +56,7 @@ now you can compile it:
 sh scripts/compile.sh faab-run
 ```
 
-# Running the code
+# Running the python code
 
 The Bela code should be running from step 3. If it's not already running, either run the code from step 3 again or run the `faab-run` project from the Bela IDE.
 
