@@ -60,6 +60,8 @@ sh scripts/compile.sh faab-run
 
 The Bela code should be running from step 3. If it's not already running, either run the code from step 3 again or run the `faab-run` project from the Bela IDE.
 
+**Important**: If you stop the python code, you should stop the Bela project as well, otherwise it will give a `Buffer n full` warning. If you want to restart the python code, you should restart the Bela project first.
+
 ## for pepper
 
 Open a new terminal and run the following command:
