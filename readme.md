@@ -17,12 +17,13 @@ pip install pipenv
 ## Clone this repo on your computer
 
 ```bash
-git clone --recurse-submodules -j8  git@github.com:pelinski/faab.git
+git clone --recurse-submodules -j8  git@github.com:pelinski/ai-mami-faab.git
 ```
 
 ## Install the python dependencies
 
 ```bash
+cd ai-mami-faab # or the folder where you cloned the repo
 pipenv install
 pipenv run pip install torch # --index-url https://download.pytorch.org/whl/cu117 # for g15
 ```
@@ -35,18 +36,20 @@ If it's not running already, run the `faab-run` project from the Bela IDE.
 
 ## for pepper
 
-Open a new terminal and run the following command:
+Inside the repo folder, run the following command:
 
 ```bash
+# in the ai-mami-faab folder
 pipenv run callback
 ```
 
 ## with OSC + SuperCollider
 
 The SuperCollider code to receive the OSC messages is in the `supercollider` folder. Run it in SuperCollider.
-To run the python code, open a new terminal and run:
+To run the python code, inside the repo folder, run:
 
 ```bash
+# in the ai-mami-faab folder
 pipenv run callback-osc
 ```
 
