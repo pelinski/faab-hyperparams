@@ -28,6 +28,10 @@ pipenv install
 pipenv run pip install torch # --index-url https://download.pytorch.org/whl/cu117 # for g15
 ```
 
+## Download trained models
+
+Download the trained models from [this link](https://www.dropbox.com/scl/fo/3ou91kqehjeb9g30roslq/AM_sA7LBkurbI3OJTwrcx2Y?rlkey=8q9chh9cgiy5nqye6hzh8xdtp&st=onfmepsq&dl=0) and extract them in the `src/models` folder.
+
 # Running the python code
 
 If it's not running already, run the `faab-run` project from the Bela IDE.
