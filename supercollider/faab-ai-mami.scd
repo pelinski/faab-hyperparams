@@ -1,61 +1,75 @@
 (
-s.options.memSize_(2.pow(20));
-s.options.sampleRate_(44100);
-s.options.numInputBusChannels_(8);
-s.options.numOutputBusChannels_(8);
-s.options.recChannels_(6);
-s.options.hardwareBufferSize = 64;
-s.options.maxSynthDefs = 2048;
-s.options.maxNodes = 2048;
-s.recHeaderFormat = "wav";
-s.options.numBuffers = 4096 * 2;
+var bufferLen = 1024; // Length of each incoming OSC buffer
+var numChannels = 4; // Number of channels
+var latencySamples = 2.5*1024; // Latency in samples
+var sampleRate = 44100; // Assume default sample rate (change if needed)
+var writePointers = Array.fill(numChannels, 0);
+var readPointers = Array.fill(numChannels, { latencySamples });
+var circularBufferSize = 10*1024; // Size of the circular buffer (must be a power of 2)
+var circularBuffers = Array.fill(numChannels, { Array.fill(circularBufferSize, 0) });
 
-s.waitForBoot({
-    var createOSCHandler;
-    var bufferLen = 512;
-    var synthDef;
-    
-    // Define the SynthDef once, outside the OSC handler
-    SynthDef(\playBuffer, { |out=0, bufnum|
-		var sig = PlayBuf.ar(1, bufnum, (BufRateScale.kr(bufnum) / 2).asInteger, doneAction: 2) * 0.25;
-		// var audioRate = A2K.ar(out);
-		Out.ar(0, sig);
-    }).add;
-    
-    s.sync;
-    
-    createOSCHandler = { |name, address|
-        OSCdef(name, { |msg|
+var audioOutput = Array.fill(numChannels, 0);
+
+// Function to handle incoming OSC messages
+var createOSCHandler = { |name, address|
+    OSCdef(
+        name,
+        {
+            arg msg;
             var receivedBuffer = msg[1..];
-            var id = msg[0].asString[2].digit - 1;
+            var id = msg[0].asString[2].digit - 1; // Extract channel ID (1-based)
             
-            if(receivedBuffer.size == bufferLen, {
-                // Create buffer and load data
-                Buffer.loadCollection(s, receivedBuffer, 1, action: { |buf|
-                    // Schedule buffer playback
-                    fork {
-                        // Play the buffer
-                        Synth(\playBuffer, [\bufnum, buf.bufnum]);
-                        
-                        // Wait for slightly longer than the buffer duration to ensure playback completes
-                        (bufferLen/s.sampleRate + 0.1).wait;
-                        
-                        // Free the buffer
-                        buf.free;
-                        
-                        ("Buffer % played and freed".format(id)).postln;
-                    };
-                });
-            }, {
-                "Received incorrect buffer size: %".format(receivedBuffer.size).warn;
-            });
-        }, address, recvPort: 2222);
-    };
-    
-    // Create handlers for all four buffers
-    createOSCHandler.(\getBuffer1, '/f1');
-    createOSCHandler.(\getBuffer2, '/f2');
-    createOSCHandler.(\getBuffer3, '/f3');
-    createOSCHandler.(\getBuffer4, '/f4');
+            if (receivedBuffer.size == bufferLen) {
+                var writePtr = writePointers[id];
+                // Write data into the circular buffer
+                bufferLen.do { |i|
+                    circularBuffers[id][(writePtr + i) % circularBufferSize] = receivedBuffer[i];
+                };
+                // Update the write pointer
+                writePointers[id] = (writePtr + bufferLen) % circularBufferSize;
+            } {
+                ("Received data of incorrect length: " ++ receivedBuffer.size).postln;
+            }
+        },
+        address,
+        recvPort: 2222
+    );
+};
+
+// Create OSC handlers for each channel
+createOSCHandler.(\getBuffer1, '/f1');
+createOSCHandler.(\getBuffer2, '/f2');
+createOSCHandler.(\getBuffer3, '/f3');
+createOSCHandler.(\getBuffer4, '/f4');
+
+// Synth for playback
+SynthDef(\circularBufferPlayer, {
+    arg out=0;
+    var sig;
+
+    sig = Array.fill(numChannels, { |channel|
+        var readPtr = readPointers[channel];
+        var writePtr = writePointers[channel];
+        var sample;
+
+        // Read data from the circular buffer
+        sample = circularBuffers[channel][readPtr % circularBufferSize];
+        readPointers[channel] = (readPtr + 1) % circularBufferSize;
+
+        // Log underrun condition
+        if (readPtr == writePtr) {
+            ("Buffer underrun on channel " ++ channel).postln;
+        };
+
+        sample; // Return the sample for this channel
+    });
+
+    // Mix the signals and play through speakers
+    Out.ar(out, sig);
+}).add;
+
+// Start the player
+s.waitForBoot({
+    Synth(\circularBufferPlayer);
 });
 )

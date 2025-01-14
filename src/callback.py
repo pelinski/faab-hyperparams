@@ -113,7 +113,8 @@ async def callback(block, cs, streamer):
             # send each feature to Bela
             for idx, feature in enumerate(normalised_out):
                 if cs.osc_client:
-                    cs.osc_client.send_message(f'/f{idx+1}', feature.tolist())
+                    feature_upsampled = B = [x for x in feature.tolist() for _ in range(2)]
+                    cs.osc_client.send_message(f'/f{idx+1}', feature_upsampled)
                 else:
                     streamer.send_buffer(idx, 'f', cs.seq_len, feature.tolist())
 
