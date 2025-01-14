@@ -1,13 +1,15 @@
 (
 var bufferLen = 1024; // Length of each incoming OSC buffer
 var numChannels = 4; // Number of channels
-var latencySamples = 2.5*1024; // Latency in samples
+var latencySamples = 5*1024; // Latency in samples
 var sampleRate = 44100; // Assume default sample rate (change if needed)
 var circularBufferSize = 10*1024; // Size of the circular buffer (must be a power of 2)
 
-var writePointers = Array.fill(numChannels, 0);
+var writePointers = Array.fill(numChannels, {0});
 var readPointers = Array.fill(numChannels, { latencySamples });
-var circularBuffers = Array.fill(numChannels, { Array.fill(circularBufferSize, 0) });
+
+s.waitForBoot({
+var circularBuffers = Array.fill(numChannels, { Buffer.alloc(s, circularBufferSize)});
 
 
 // OSC message handler function
@@ -45,15 +47,18 @@ SynthDef(\circularBufferPlayer, {
 
     sig = Array.fill(numChannels, { |channel|
         //var readPtr = LocalIn.kr(1); // Use a local control bus to manage pointers
-		var readPtr = readPointers[channel];
-        var writePtr = writePointers[channel];
+		/*var readPtr = readPointers[channel];
+        var writePtr = writePointers[channel];*/
+			// var readPtr = Line.ar(0, circularBufferSize, circularBufferSize * SampleDur.ir);
+		// var writePtr = writePointers[channel];
 		var sample;
 
-        sample = PlayBuf.ar(1, circularBuffers[channel], BufRateScale.kr(circularBuffers[channel]), 1, readPtr, loop: 1);
+			sample = PlayBuf.ar(1, circularBuffers[channel], BufRateScale.kr(circularBuffers[channel]), 1, loop: 1).scope;
+			// sample = BufRd.ar(1, circularBuffers[channel], readPtr, loop: 1);
         // Log underrun condition
-        if (readPtr == writePtr) {
+   /*     if (readPtr == writePtr) {
             ("Buffer underrun on channel " ++ channel).postln;
-        };
+        };*/
         // Increment read pointer
         //LocalOut.kr((readPtr + 1) % circularBufferSize);
         sample;
@@ -63,8 +68,13 @@ SynthDef(\circularBufferPlayer, {
 }).add;
 
 // Start playback
-s.waitForBoot({
-    circularBuffers.do(_.zero); // Clear buffers
+/*s.waitForBoot({
+/*	circularBuffers.do(_.zero); // Clear buffers*/
     Synth(\circularBufferPlayer);
+});*/
 });
 )
+
+
+    Synth(\circularBufferPlayer);
+
