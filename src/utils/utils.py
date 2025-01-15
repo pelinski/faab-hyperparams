@@ -214,10 +214,9 @@ def get_models_range(path='src/models/trained'):
 
 def find_closest_model(output_coordinates, scaled_model_coordinates):
 
-    model_keys = list(scaled_model_coordinates.keys())
-    scaled_model_coordinates = np.array(
-        list(scaled_model_coordinates.values()))
-
+    model_keys, scaled_model_coordinates = zip(*scaled_model_coordinates.items())
+    scaled_model_coordinates = np.array(scaled_model_coordinates)
+    
     # Calculate the Euclidean distances
     distances = np.linalg.norm(
         scaled_model_coordinates - output_coordinates, axis=1)

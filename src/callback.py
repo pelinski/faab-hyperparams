@@ -214,6 +214,4 @@ if __name__ == "__main__":
     streamer.start_streaming(
         vars, on_block_callback=callback, callback_args=(cs, streamer))
 
-    async def wait_forever():
-        await asyncio.Future()
-    asyncio.run(wait_forever())
+    streamer.wait(0)
