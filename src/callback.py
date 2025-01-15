@@ -56,7 +56,7 @@ class CallbackState:
         
         # filters
         self.bridge_filter = biquad.lowpass(sr=streamer.sample_rate, f=1, q=0.707)
-        self.out_lp = [biquad.highpass(sr=streamer.sample_rate, f=hp_filter_freq, q=0.707) for _ in range(out_size)]
+        self.out_hp = [biquad.highpass(sr=streamer.sample_rate, f=hp_filter_freq, q=0.707) for _ in range(out_size)]
         
 
         # variables for the callback
@@ -121,7 +121,7 @@ async def callback(block, cs, streamer):
                     cs.osc_client.send_message(f'/f{idx+1}', feature_upsampled)
                 else:
                     # dc filter
-                    filtered_out = cs.out_lp[idx](feature.cpu())
+                    filtered_out = cs.out_hp[idx](feature.cpu())
                     streamer.send_buffer(idx, 'f', cs.seq_len, filtered_out.tolist())
 
             # -- amplitude --
