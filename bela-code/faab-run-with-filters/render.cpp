@@ -3,6 +3,8 @@
 #include <Watcher.h>
 #include <cmath>
 #include <vector>
+#include <libraries/Biquad/Biquad.h>
+#include "Filter.h"
 
 #define NUM_SENSORS 8
 #define NUM_OUTPUTS 4
@@ -35,9 +37,23 @@ uint64_t totalReceivedCount;
 
 unsigned int gAudioFramesPerAnalogFrame;
 
+std::vector<Biquad> gBiquads; // filters to process the OUTPUTS
+float lpFilterCutoff = 200.0;
+
 // float risingThreshold = 0.021;               // Trigger to 1 above this threshold
 // float fallingThreshold = 0.008;              // Trigger back to 0 below this threshold
 // float schmittGate; // Schmitt trigger output
+
+// envelope follower
+Filter gEnvelopeFollower;
+float gLastEnvelopeSample = 0.0;
+float attackTime = 0.020;
+float decayTime = 0.100;
+float baseFrequency = 200.0;
+float frequencySensitivity = 3000.0;
+float q = 4.0;
+float attackCoeff;
+float decayCoeff;
 
 bool binaryDataCallback(const std::string& addr, const WSServerDetails* id, const unsigned char* data, size_t size, void* arg) {
 
@@ -101,6 +117,13 @@ bool setup(BelaContext* context, void* userData) {
         // // prefill each circular buffer with prefillSize zeroes to give the write
         // pointer some time to catch up
         circularBufferWriteIndex[i] = prefillSize % circularBufferSize;
+
+        // // envelope follower init
+        gEnvelopeFollower.setSampleRate(context->audioSampleRate);
+        gEnvelopeFollower.setFrequency(baseFrequency);
+        gEnvelopeFollower.setQ(q);
+        attackCoeff = pow(exp(-1.0 / attackTime), 1.0 / context->audioSampleRate);
+        decayCoeff = pow(exp(-1.0 / decayTime), 1.0 / context->audioSampleRate);
     }
 
     Bela_getDefaultWatcherManager()->getGui().setBinaryDataCallback(binaryDataCallback);
@@ -111,6 +134,15 @@ bool setup(BelaContext* context, void* userData) {
     receivedBuffer.bufferData.reserve(MAX_EXPECTED_BUFFER_SIZE);
 
     // schmittGate = 0.0;
+    Biquad::Settings settings{
+        .fs = context->audioSampleRate,
+        .type = Biquad::lowpass,
+        .cutoff = lpFilterCutoff,
+        .q = 0.707,
+        .peakGainDb = 0,
+    };
+    // create some filters to process the input
+    gBiquads.resize(NUM_OUTPUTS, Biquad(settings));
 
     return true;
 }
@@ -123,13 +155,30 @@ void render(BelaContext* context, void* userData) {
         if (gAudioFramesPerAnalogFrame && !(n % gAudioFramesPerAnalogFrame)) {
 
             // read sensor values and put them in the watcher
+            float sumInputs = 0.0;
             for (unsigned int i = 0; i < NUM_SENSORS; i++) {
                 *gFaabWatchers[i] = analogRead(context, n / gAudioFramesPerAnalogFrame, i);
+                sumInputs = sumInputs + *gFaabWatchers[i];
             }
+
+            // // envelope follower
+            float avgInput = sumInputs / NUM_SENSORS;
+            float envelopeInput = fabsf(avgInput);
+            float envelopeOutput;
+            if (avgInput > gLastEnvelopeSample) {
+                envelopeOutput = attackCoeff * gLastEnvelopeSample + (1 - attackCoeff) * envelopeInput;
+            } else {
+                envelopeOutput = decayCoeff * gLastEnvelopeSample + (1 - decayCoeff) * envelopeInput;
+            }
+            gLastEnvelopeSample = envelopeOutput;
+            float frequency = baseFrequency + frequencySensitivity * envelopeOutput;
+            gEnvelopeFollower.setFrequency(frequency);
 
             // analog outputs
             for (unsigned int i = 0; i < NUM_OUTPUTS; i++) {
-                float out = circularBuffers[i][circularBufferReadIndex[i]];
+                float out = 0.5 * gEnvelopeFollower.process(gBiquads[i].process(circularBuffers[i][circularBufferReadIndex[i]]));
+                // float out = 0.5 * gEnvelopeFollower.process(circularBuffers[i][circularBufferReadIndex[i]]);
+                // float out = circularBuffers[i][circularBufferReadIndex[i]];
                 analogWrite(context, n, i, out);
                 if (totalReceivedCount > 0 && (circularBufferReadIndex[i] + 1) % circularBufferSize != circularBufferWriteIndex[i]) {
                     circularBufferReadIndex[i] = (circularBufferReadIndex[i] + 1) % circularBufferSize;

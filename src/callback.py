@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-import asyncio
 import biquad
 import argparse
 from collections import deque  # circular buffers
@@ -9,14 +8,15 @@ from pythonosc.udp_client import SimpleUDPClient
 from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, find_closest_model, get_models_range
 
 class CallbackState:
-    def __init__(self, seq_len, num_models, num_blocks_to_compute_avg, num_blocks_to_compute_std, filter,  num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None):
+    def __init__(self, seq_len, num_models, out_size, num_blocks_to_compute_avg, num_blocks_to_compute_std, hp_filter_freq,  num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None):
 
         # -- params --
         self.seq_len = seq_len
         self.num_models = num_models
+        self.out_size = out_size
         self.num_blocks_to_compute_avg = num_blocks_to_compute_avg
         self.num_blocks_to_compute_std = num_blocks_to_compute_std
-        self.filter = filter
+        self.hp_filter_freq = hp_filter_freq
         self.num_of_iterations_in_this_model_check = num_of_iterations_in_this_model_check
         self.init_ratio_rising_threshold = init_ratio_rising_threshold
         self.init_ratio_falling_threshold = init_ratio_falling_threshold
@@ -47,12 +47,17 @@ class CallbackState:
                 self.device), "max": torch.FloatTensor([0, 0, 0, 0]).to(self.device)}
 
         # model space
-        # min and max of model outputs (after passing the whole dataset)
+        # min and max of model outputs (after passing the full dataset)
         self.full_dataset_models_range = get_models_range(path=path)
         # model's chosen 4 hyperparameters mapped to values between 0 and 1
         self.models_coordinates = get_models_coordinates(
             path=path, sorted=True, num_models=num_models)
         starter_id = sorted_models[-1]  # h0o65m8s is nice
+        
+        # filters
+        self.bridge_filter = biquad.lowpass(sr=streamer.sample_rate, f=1, q=0.707)
+        self.out_lp = [biquad.highpass(sr=streamer.sample_rate, f=hp_filter_freq, q=0.707) for _ in range(out_size)]
+        
 
         # variables for the callback
         self.model = self.models[starter_id]
@@ -72,9 +77,7 @@ class CallbackState:
 async def callback(block, cs, streamer):
 
     with torch.no_grad():
-        _raw_data_tensor = torch.stack([torch.as_tensor(buffer["buffer"]["data"], dtype=torch.float32) for buffer in block])
-        # _raw_data_tensor = torch.stack([torch.FloatTensor(
-        #     buffer["buffer"]["data"]) for buffer in block])  # num_features, 1024
+        _raw_data_tensor = torch.stack([torch.as_tensor(buffer["buffer"]["data"], dtype=torch.float32) for buffer in block]) # num_features, 1024
         # # split the data into seq_len to feed it into the model
         inputs = _raw_data_tensor.unfold(1, cs.seq_len, cs.seq_len).permute(
             1, 2, 0)  # n, seq_len, num_features
@@ -96,7 +99,7 @@ async def callback(block, cs, streamer):
 
                 _min, _max = cs.models_running_range[cs.model.id]["min"], cs.models_running_range[cs.model.id]["max"]
 
-            # absolute normalisation (taking max and min from passing the full dataset)
+            # absolute normalisation (taking max and min from passing the full dataset) -- using this currently because there was a lot of variability across models
             else:
                 _model_range = cs.full_dataset_models_range[cs.model.id]
                 _min, _max = torch.FloatTensor(_model_range["min"]).to(
@@ -105,21 +108,24 @@ async def callback(block, cs, streamer):
             # -- normalise before sending to Bela!! --
             normalised_out = (out - _min.unsqueeze(1)) / \
                 (_max - _min).unsqueeze(1)
-
+                
             # permute output
             if cs.permute_out:
                 normalised_out = normalised_out[cs.model_perm]
 
             # send each feature to Bela
             for idx, feature in enumerate(normalised_out):
+
                 if cs.osc_client:
-                    feature_upsampled = B = [x for x in feature.tolist() for _ in range(2)]
+                    feature_upsampled = [x for x in feature.tolist() for _ in range(2)]
                     cs.osc_client.send_message(f'/f{idx+1}', feature_upsampled)
                 else:
-                    streamer.send_buffer(idx, 'f', cs.seq_len, feature.tolist())
+                    # dc filter
+                    filtered_out = cs.out_lp[idx](feature.cpu())
+                    streamer.send_buffer(idx, 'f', cs.seq_len, filtered_out.tolist())
 
             # -- amplitude --
-            _bridge_piezo = cs.filter(block[5]["buffer"]["data"])
+            _bridge_piezo = cs.bridge_filter(block[5]["buffer"]["data"])
             cs.bridge_piezo_avg.append(np.average(_bridge_piezo))
             weighted_avg_bridge_piezo = np.average(
                 cs.bridge_piezo_avg, weights=range(1, len(cs.bridge_piezo_avg)+1))
@@ -178,7 +184,7 @@ async def callback(block, cs, streamer):
 
 if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser(description="Description of your script")
+    parser = argparse.ArgumentParser(description="faab-callback")
     parser.add_argument('--osc', action='store_true', help='Use OSC server')
     args = parser.parse_args()
     if args.osc:
@@ -194,16 +200,17 @@ if __name__ == "__main__":
     cs = CallbackState(
         seq_len=512,
         num_models=20,
+        out_size = 4,
         num_blocks_to_compute_avg=10,
         num_blocks_to_compute_std=40,
-        filter=biquad.lowpass(sr=streamer.sample_rate, f=1, q=0.707),
+        hp_filter_freq=10,
         num_of_iterations_in_this_model_check=100,
         init_ratio_rising_threshold=2.5,
         init_ratio_falling_threshold=1.3,
-        threshold_leak=0.1,
+        threshold_leak=0.01,
         trigger_width=25,
         trigger_idx=4,
-        running_norm=True,
+        running_norm=False,
         permute_out=False,
         path="src/models/trained/transformer-autoencoder",
         osc_ip = osc_ip,
