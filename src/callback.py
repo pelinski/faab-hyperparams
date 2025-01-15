@@ -72,10 +72,10 @@ class CallbackState:
 async def callback(block, cs, streamer):
 
     with torch.no_grad():
-
-        _raw_data_tensor = torch.stack([torch.FloatTensor(
-            buffer["buffer"]["data"]) for buffer in block])  # num_features, 1024
-        # split the data into seq_len to feed it into the model
+        _raw_data_tensor = torch.stack([torch.as_tensor(buffer["buffer"]["data"], dtype=torch.float32) for buffer in block])
+        # _raw_data_tensor = torch.stack([torch.FloatTensor(
+        #     buffer["buffer"]["data"]) for buffer in block])  # num_features, 1024
+        # # split the data into seq_len to feed it into the model
         inputs = _raw_data_tensor.unfold(1, cs.seq_len, cs.seq_len).permute(
             1, 2, 0)  # n, seq_len, num_features
 
@@ -197,7 +197,7 @@ if __name__ == "__main__":
         num_blocks_to_compute_avg=10,
         num_blocks_to_compute_std=40,
         filter=biquad.lowpass(sr=streamer.sample_rate, f=1, q=0.707),
-        num_of_iterations_in_this_model_check=20,
+        num_of_iterations_in_this_model_check=100,
         init_ratio_rising_threshold=2.5,
         init_ratio_falling_threshold=1.3,
         threshold_leak=0.1,
