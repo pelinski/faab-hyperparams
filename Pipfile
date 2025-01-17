@@ -23,4 +23,4 @@ callback-osc = "python src/callback.py --osc"
 requires = "pip-chill --no-chill -v" # > requirements.txt
 
 [requires]
-python_version = "3.10"
+python_version = "3.9"
