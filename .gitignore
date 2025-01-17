@@ -15,3 +15,4 @@ log*
 src/__pycache__/*
 dev/*
 deptree.txt
+cape/*.txt

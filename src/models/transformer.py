@@ -80,7 +80,7 @@ class InputLayer(torch.nn.Module):
         self.PositionalEncoding = PositionalEncoding(
             feat_in_size, max_len, dropout, pe_scale_factor)
         self.Linear = torch.nn.Linear(feat_in_size, d_model, bias=True)
-        self.activation = torch.nn.Sigmoid()
+        # self.activation = torch.nn.Sigmoid()
 
     def init_weights(self, initrange=0.1):
         self.Linear.bias.data.zero_()
@@ -89,14 +89,15 @@ class InputLayer(torch.nn.Module):
     def forward(self, src):
         x = self.PositionalEncoding(src)
         x = self.Linear(src)
-        return self.activation(x)
+        return x
+        # return self.activation(x)
 
 
 class OutputLayer(torch.nn.Module):
     def __init__(self, output_dim, d_model):
         super(OutputLayer, self).__init__()
         self.Linear = torch.nn.Linear(d_model, output_dim, bias=True)
-        self.activation = torch.nn.Sigmoid()
+        # self.activation = torch.nn.Tanh()
 
     def init_weights(self, initrange=0.1):
         self.Linear.bias.data.zero_()
@@ -104,7 +105,8 @@ class OutputLayer(torch.nn.Module):
 
     def forward(self, decoder_out):
         y = self.Linear(decoder_out)
-        return self.activation(y)
+        return y
+        # return self.activation(y)
 
 
 class TransformerAutoencoder(torch.nn.Module):

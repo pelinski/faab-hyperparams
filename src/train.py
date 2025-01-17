@@ -5,7 +5,7 @@ import numpy as np
 from tqdm import tqdm
 from models import TransformerAutoencoder, LSTM
 from dataset import Dataset, DatasetPred
-from src.utils.utils import get_html_plot, load_hyperparams
+from utils.utils import get_html_plot, load_hyperparams
 
 
 hyperparameters, hp_path = load_hyperparams()
@@ -20,9 +20,9 @@ with wandb.init(project=hyperparameters["project"], config=hyperparameters,  set
     wandb.save(hp_path)
 
     if config.pred:
-        dataset = Dataset().load_dataset_from_pickle(pickle_path=config.pickle_path)
-    else:
         dataset = DatasetPred().load_dataset_from_pickle(pickle_path=config.pickle_path)
+    else:
+        dataset = Dataset().load_dataset_from_pickle(pickle_path=config.pickle_path)
 
     if torch.isnan(dataset.inputs).any():
         print("Dataset contains NaN values")

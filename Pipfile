@@ -8,6 +8,8 @@ wandb = "==0.16"
 biquad = "==0.4"
 pybela = "==2.0.1"
 python-osc = "*"
+matplotlib = "*"
+scipy = "*"
 
 [dev-packages]
 pip-chill = "*"

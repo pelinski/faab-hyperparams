@@ -99,7 +99,7 @@ async def callback(block, cs, streamer):
 
                 _min, _max = cs.models_running_range[cs.model.id]["min"], cs.models_running_range[cs.model.id]["max"]
 
-            # absolute normalisation (taking max and min from passing the full dataset) -- using this currently because there was a lot of variability across models
+            # absolute normalisation (taking max and min from passing the full dataset) 
             else:
                 _model_range = cs.full_dataset_models_range[cs.model.id]
                 _min, _max = torch.FloatTensor(_model_range["min"]).to(
@@ -210,7 +210,7 @@ if __name__ == "__main__":
         threshold_leak=0.01,
         trigger_width=25,
         trigger_idx=4,
-        running_norm=False,
+        running_norm=True,
         permute_out=False,
         path="src/models/trained/transformer-autoencoder",
         osc_ip = osc_ip,

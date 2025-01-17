@@ -6,38 +6,41 @@ from pybela import Logger
 
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, pickle_path="", seq_len=0, device=torch.device("cpu"), n_items=0, normalise = False):
+    def __init__(self, feature_names="", pickle_path="", seq_len=0, device=torch.device("cpu"), n_items=0, normalise = False):
         super().__init__()
-        self.pickle_path = pickle_path
+        self.feature_names = feature_names
+        self.pickle_path = pickle_path if type(pickle_path) == list else [pickle_path]
         self.device = device
-        self.timestamp =  pickle_path.split('/')[-1].split('_')[0]
-
+        self.timestamps = []
         # self._seq_len = seq_len
         self.seq_len = seq_len
         # self._raw_data_tensor = None
-        self.feature_names = []
         # self.raw_data = {}
-        self.num_features = None
-        self.inputs = None
+        self.num_features = 8
+        
+        self.inputs = torch.zeros(1,self.seq_len, self.num_features, dtype=torch.float32)
 
         if pickle_path != "" and seq_len != 0:
-            _raw_data = self.load_data_from_pickle(self.pickle_path)
-            self.num_features = len(_raw_data.keys())
-            self.feature_names = list(_raw_data.keys())
+            for _pickle_path in self.pickle_path:
+                self.timestamps.append(_pickle_path.split('/')[-1].split('_')[0])
+                _raw_data = self.load_data_from_pickle(_pickle_path)
 
-            _raw_data_tensor = self.process_raw_data_into_torch_tensor(
-                _raw_data)
-            self.inputs = _raw_data_tensor.unfold(
-                1, self.seq_len, self.seq_len).permute(1, 2, 0).to(self.device)  # n, seq_len, num_features
+                _raw_data_tensor = self.process_raw_data_into_torch_tensor(
+                    _raw_data)
+                _data = _raw_data_tensor.unfold(
+                    1, self.seq_len, self.seq_len).permute(1, 2, 0).to(self.device)  # n, seq_len, num_features
+                
+                print(_data.shape)
+                self.inputs = torch.cat((self.inputs, _data), dim=0)
+                print(self.inputs.shape)
+                if n_items != 0:
+                    assert n_items < len(
+                        self.inputs), "n_items must be less than the number of samples in the dataset"
+                    self.inputs = self.inputs[:n_items+1]
 
-            if n_items != 0:
-                assert n_items < len(
-                    self.inputs), "n_items must be less than the number of samples in the dataset"
-                self.inputs = self.inputs[:n_items+1]
-
-            # normalise
-            if normalise:
-                self.inputs = self.normalise(self.inputs)
+                # normalise
+                # if normalise:
+                #     self.inputs = self.normalise(self.inputs)
 
     def process_raw_data_into_torch_tensor(self, _raw_data):
         _min_len = min([len(_raw_data[key])
@@ -109,7 +112,7 @@ class DatasetPred(Dataset):
     def __getitem__(self, idx):
         return self.inputs[idx], self.targets[idx]
 
-def convert_binary_dataset_to_dict(date, vars, save_as_pickle=True):
+def convert_binary_dataset_to_dict(date, vars, sample_rate, tail_to_remove_in_seconds=0,  save_as_pickle=True):
     data = {}
     raw_data = {}
 
@@ -120,7 +123,11 @@ def convert_binary_dataset_to_dict(date, vars, save_as_pickle=True):
         print(f"Processing {var}...")
         
         data[var] = [item for _buffer in _data["buffers"] for item in _buffer["data"]]
-        time = abs(raw_data[var]['buffers'][0]['ref_timestamp'] - raw_data[var]['buffers'][-1]['ref_timestamp'])/44100/60
+
+        if tail_to_remove_in_seconds > 0:
+            data[var] = data[var][:-int(tail_to_remove_in_seconds * sample_rate/2)]
+            
+        time = len(data[var]) / (sample_rate / 2) / 60
         
         print(f'Processed {var} – {len(data[var])} points, {np.round(time,3)} min')
         
