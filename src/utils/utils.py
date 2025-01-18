@@ -15,8 +15,8 @@ from models import TransformerAutoencoder
 
 
 def get_device():
-    # return torch.device("mps" if torch.backends.mps.is_available() else "cuda:0" if torch.cuda.is_available() else "cpu") # uncomment for mac m1!!! -- comment for clusters
-    return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    return torch.device("mps" if torch.backends.mps.is_available() else "cuda:0" if torch.cuda.is_available() else "cpu") # uncomment for mac m1!!! -- comment for clusters
+    # return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 def load_hyperparams():
