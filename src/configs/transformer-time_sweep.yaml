@@ -6,10 +6,10 @@ early_terminate:
   type: hyperband
   min_iter: 30
   eta: 3
-  max_iter: 500
+  max_iter: 250
 parameters:
   batch_size:
-    values: [32, 64, 128, 256]
+    values: [32, 64, 128]
   ff_size:
     values: [8, 16, 32, 64, 128, 256]
   dropout:
@@ -23,7 +23,7 @@ parameters:
   num_heads:
     values: [1, 2, 4]
   comp_seq_len:
-    values: [32, 64, 128]
+    values: [128, 256, 512]
   num_layers:
     distribution: "int_uniform"
     min: 1
@@ -33,6 +33,6 @@ command:
   - python3
   - src/train.py
   - "-hp"
-  - "src/configs/transformer-time.yaml"
+  - "src/configs/transformer.yaml"
 project: "faab_autoencoder_transformer_time"
 description: ""
