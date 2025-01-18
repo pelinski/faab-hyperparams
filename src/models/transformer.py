@@ -199,4 +199,3 @@ if __name__ == "__main__":
     
     assert output.shape == (batch_size, seq_len, feat_len)
     assert memory.shape == (batch_size, comp_seq_len, comp_feat_len)
-

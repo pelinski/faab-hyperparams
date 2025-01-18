@@ -20,7 +20,7 @@ mask: False
 # training parameters
 max_grad_norm: 0
 dropout: 0
-epochs: 500
+epochs: 150
 optimizer: "rmsprop"
 learning_rate: 0.0001
 scheduler_step_size: 0

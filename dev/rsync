@@ -1,0 +1,2 @@
+rsync -ahc --progress --exclude={'wandb','dataset/data'} .  frank:/homes/tpr01/faab
+rsync -ahc --progress src/dataset/data/07041536/07041536_processed_512.pkl  frank:/homes/tpr01/faab
