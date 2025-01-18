@@ -11,7 +11,7 @@ from utils.utils import load_model, get_device, get_sorted_models, get_models_co
 # TODO add envelopes to avoid clipping?
 
 class CallbackState:
-    def __init__(self, seq_len, num_models, out_size, num_blocks_to_compute_avg, num_blocks_to_compute_std, hp_filter_freq,  num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None):
+    def __init__(self, seq_len, num_models, out_size, num_blocks_to_compute_avg, num_blocks_to_compute_std, out_hp_filter_freq, out_lp_filter_freq, envelope_len, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None):
 
         # -- params --
         self.seq_len = seq_len
@@ -19,7 +19,9 @@ class CallbackState:
         self.out_size = out_size
         self.num_blocks_to_compute_avg = num_blocks_to_compute_avg
         self.num_blocks_to_compute_std = num_blocks_to_compute_std
-        self.hp_filter_freq = hp_filter_freq
+        self.out_hp_filter_freq = out_hp_filter_freq
+        self.out_lp_filter_freq = out_lp_filter_freq
+        self.envelope_len = envelope_len # for envelopes when changing model
         self.num_of_iterations_in_this_model_check = num_of_iterations_in_this_model_check
         self.init_ratio_rising_threshold = init_ratio_rising_threshold
         self.init_ratio_falling_threshold = init_ratio_falling_threshold
@@ -59,7 +61,11 @@ class CallbackState:
         
         # filters
         self.bridge_filter = biquad.lowpass(sr=streamer.sample_rate, f=1, q=0.707)
-        self.out_hp = [biquad.highpass(sr=streamer.sample_rate, f=hp_filter_freq, q=0.707) for _ in range(out_size)]
+        self.out_hp = [biquad.highpass(sr=streamer.sample_rate, f=out_hp_filter_freq, q=0.707) for _ in range(out_size)]
+        self.out_lp = [biquad.lowpass(sr=streamer.sample_rate, f=out_lp_filter_freq, q=0.707) for _ in range(out_size)]
+        
+        #envelope
+        self.envelope_len = envelope_len
         
 
         # variables for the callback
@@ -118,13 +124,17 @@ async def callback(block, cs, streamer):
 
             # send each feature to Bela
             for idx, feature in enumerate(normalised_out):
+                # dc filter
+                filtered_out = cs.out_hp[idx](feature.cpu())
+                filtered_out = cs.out_lp[idx](filtered_out).tolist()
+                
+                #envelope # TODO
+                #filtered_out = 
 
                 if cs.osc_client:
-                    cs.osc_client.send_message(f'/f{idx+1}', feature.tolist())
+                    cs.osc_client.send_message(f'/f{idx+1}', filtered_out)
                 else:
-                    # dc filter
-                    filtered_out = cs.out_hp[idx](feature.cpu())
-                    streamer.send_buffer(idx, 'f', cs.seq_len, filtered_out.tolist())
+                    streamer.send_buffer(idx, 'f', cs.seq_len, filtered_out)
 
             # -- amplitude --
             _bridge_piezo = cs.bridge_filter(block[5]["buffer"]["data"])
@@ -205,7 +215,9 @@ if __name__ == "__main__":
         out_size = 4,
         num_blocks_to_compute_avg=10,
         num_blocks_to_compute_std=40,
-        hp_filter_freq=10,
+        out_hp_filter_freq=10,
+        out_lp_filter_freq=5000,
+        envelope_len=256
         num_of_iterations_in_this_model_check=100,
         init_ratio_rising_threshold=2.5,
         init_ratio_falling_threshold=1.3,
