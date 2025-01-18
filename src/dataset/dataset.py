@@ -16,7 +16,7 @@ class Dataset(torch.utils.data.Dataset):
         self.timestamps = []
         # self._seq_len = seq_len
         self.seq_len = seq_len
-        self.hop_size = hop_size
+        # self.hop_size = hop_size
         # self._raw_data_tensor = None
         # self.raw_data = {}
         self.num_features = 8

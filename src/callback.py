@@ -12,7 +12,25 @@ from utils.utils import load_model, get_device, get_sorted_models, get_models_co
 # TODO add envelopes to avoid clipping?
 
 class CallbackState:
-    def __init__(self, seq_len, num_models, out_size, num_blocks_to_compute_avg, num_blocks_to_compute_std, out_hp_filter_freq, out_lp_filter_freq, envelope_len, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None):
+    def __init__(self, seq_len, 
+                 num_models, 
+                 out_size, 
+                 num_blocks_to_compute_avg, 
+                 num_blocks_to_compute_std, 
+                 out_hp_filter_freq, 
+                 out_lp_filter_freq, 
+                 envelope_len, 
+                 num_of_iterations_in_this_model_check, 
+                 init_ratio_rising_threshold, 
+                 init_ratio_falling_threshold, 
+                 threshold_leak, 
+                 trigger_width, 
+                 trigger_idx, 
+                 running_norm, 
+                 permute_out, 
+                 path, 
+                 osc_ip=None, 
+                 osc_port=None):
 
         # -- params --
         self.seq_len = seq_len
@@ -33,7 +51,8 @@ class CallbackState:
         self.permute_out = permute_out
         self.device = get_device()
         self.path = path
-        self.osc_ip, self.osc_port = osc_ip, osc_port
+        self.osc_ip, 
+        self.osc_port = osc_ip, osc_port
         self.osc_client = None
         
         # init osc server 
@@ -220,7 +239,7 @@ if __name__ == "__main__":
         num_blocks_to_compute_std=40,
         out_hp_filter_freq=10,
         out_lp_filter_freq=5000,
-        envelope_len=256
+        envelope_len=256,
         num_of_iterations_in_this_model_check=100,
         init_ratio_rising_threshold=2.5,
         init_ratio_falling_threshold=1.3,

@@ -1,6 +1,6 @@
 import argparse
 import yaml
-import torch 
+import torch
 import json
 import numpy as np
 import pandas as pd
@@ -15,7 +15,8 @@ from models import TransformerAutoencoder
 
 
 def get_device():
-    return torch.device("mps" if torch.backends.mps.is_available() else "cuda:0" if torch.cuda.is_available() else "cpu") # uncomment for mac m1!!! -- comment for clusters
+    # uncomment for mac m1!!! -- comment for clusters
+    return torch.device("mps" if torch.backends.mps.is_available() else "cuda:0" if torch.cuda.is_available() else "cpu")
     # return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
@@ -33,16 +34,19 @@ def load_hyperparams():
                         default="test", type=str)
     parser.add_argument("--pickle_path", help="dataset path",
                         default="src/dataset/processed_dataset_512.pkl", type=str)
-    parser.add_argument("--weights_path", help="weights path", default=None, type=str)
+    parser.add_argument(
+        "--weights_path", help="weights path", default=None, type=str)
     parser.add_argument("--seq_len", help="maximum sequence length",
+                        default=512, type=int)
+    parser.add_argument("--comp_seq_len", help="sequence length compression",
                         default=512, type=int)
     parser.add_argument("--pred", help="prediction task",
                         default=False, type=bool)
     parser.add_argument("--batch_size", help="batch size",
                         default=64, type=int)
-    parser.add_argument("--feat_in_size", help="feature input size",
+    parser.add_argument("--feat_len", help="feature input size",
                         default=8, type=int)
-    parser.add_argument("--d_model", help="model dimension",
+    parser.add_argument("--comp_feat_len", help="model dimension",
                         default=4, type=int)
     parser.add_argument("--ff_size", help="ff size",
                         default=12, type=int)
@@ -63,7 +67,8 @@ def load_hyperparams():
         "--epochs", help="number of training epochs", default=500, type=int)
     parser.add_argument(
         "--optimizer", help="optimizer algorithm", default='rmsprop', type=str)
-    parser.add_argument("--criterion", help="loss criterion", default='mse', type=str)
+    parser.add_argument("--criterion", help="loss criterion",
+                        default='mse', type=str)
     parser.add_argument("--learning_rate",
                         help="learning rate", default=0.0001, type=float)
     parser.add_argument("--scheduler_step_size",
@@ -89,8 +94,9 @@ def load_hyperparams():
                    "seq_len": hp["seq_len"] if "seq_len" in hp else args.seq_len,
                    "pred": hp["pred"] if "pred" in hp else args.pred,
                    "batch_size": hp["batch_size"] if "batch_size" in hp else args.batch_size,
-                   "feat_in_size": hp["feat_in_size"] if "feat_in_size" in hp else args.feat_in_size,
-                   "d_model": hp["d_model"] if "d_model" in hp else args.d_model,
+                   "feat_len": hp["feat_len"] if "feat_len" in hp else args.feat_len,
+                   "comp_feat_len": hp["comp_feat_len"] if "comp_feat_len" in hp else args.comp_feat_len,
+                   "comp_seq_len": hp["comp_seq_len"] if "comp_seq_len" in hp else args.comp_seq_len,
                    "ff_size": hp["ff_size"] if "ff_size" in hp else args.ff_size,
                    "num_layers": hp["num_layers"] if "num_layers" in hp else args.num_layers,
                    "model": hp["model"] if "model" in hp else args.model,
@@ -98,7 +104,7 @@ def load_hyperparams():
                    "dropout": hp["dropout"] if "dropout" in hp else args.dropout,
                    "epochs": hp["epochs"] if "epochs" in hp else args.epochs,
                    "optimizer": hp["optimizer"] if "optimizer" in hp else args.optimizer,
-                    "criterion": hp["criterion"] if "criterion" in hp else args.criterion,
+                   "criterion": hp["criterion"] if "criterion" in hp else args.criterion,
                    "learning_rate": hp["learning_rate"] if "learning_rate" in hp else args.learning_rate,
                    "scheduler_step_size": hp["scheduler_step_size"] if "scheduler_step_size" in hp else args.scheduler_step_size,
                    "scheduler_gamma": hp["scheduler_gamma"] if "scheduler_gamma" in hp else args.scheduler_gamma,
@@ -197,7 +203,7 @@ def load_model(_id, path='src/models/trained'):
     id_ep = json.load(open(f'{path}/id_ep.json'))
     epochs = id_ep[_id]
     config = load_config(_id, epochs, path)
-    model = TransformerAutoencoder(d_model=config["d_model"], feat_in_size=config["feat_in_size"], num_heads=config["num_heads"], ff_size=config["ff_size"],
+    model = TransformerAutoencoder(comp_feat_len=config["comp_feat_len"], feat_len=config["feat_len"], num_heads=config["num_heads"], ff_size=config["ff_size"],
                                    dropout=config["dropout"], num_layers=config["num_layers"], max_len=config["seq_len"], pe_scale_factor=config["pe_scale_factor"], mask=config["mask"], id=_id)
     model.load_state_dict(torch.load(
         f'{path}/transformer_run_{_id}_{epochs}.model', map_location=get_device()))
@@ -222,9 +228,10 @@ def get_models_range(path='src/models/trained'):
 
 def find_closest_model(output_coordinates, scaled_model_coordinates):
 
-    model_keys, scaled_model_coordinates = zip(*scaled_model_coordinates.items())
+    model_keys, scaled_model_coordinates = zip(
+        *scaled_model_coordinates.items())
     scaled_model_coordinates = np.array(scaled_model_coordinates)
-    
+
     # Calculate the Euclidean distances
     distances = np.linalg.norm(
         scaled_model_coordinates - output_coordinates, axis=1)
@@ -287,7 +294,8 @@ class weighted_MSELoss(torch.nn.Module):
     def __init__(self, weights):
         super().__init__()
         self.weights = weights
-    def forward(self,inputs,targets):
+
+    def forward(self, inputs, targets):
         """Computes the weighted mean squared error loss.
 
         Args:
@@ -298,6 +306,5 @@ class weighted_MSELoss(torch.nn.Module):
         Returns:
             torch.Tensor: Weighted mean squared error loss
         """
-        loss =  ((inputs - targets)**2 )*self.weights
+        loss = ((inputs - targets)**2)*self.weights
         return torch.sqrt(loss.mean())
-    

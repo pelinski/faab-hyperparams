@@ -24,7 +24,8 @@ class PositionalEncoding(torch.nn.Module):
         self.dropout = torch.nn.Dropout(p=dropout)
         self.scale_factor = scale_factor
 
-        pe = torch.zeros(seq_len, comp_feat_len)  # shape (seq_len, comp_feat_len)
+        # shape (seq_len, comp_feat_len)
+        pe = torch.zeros(seq_len, comp_feat_len)
         position = torch.arange(
             0, seq_len, dtype=torch.float)  # Shape (seq_len)
         position = position.unsqueeze(1)  # Shape (seq_len, 1)
@@ -52,7 +53,7 @@ class PositionalEncoding(torch.nn.Module):
 
 
 class Encoder(torch.nn.Module):
-    def __init__(self, comp_feat_len, num_heads, ff_size, dropout, num_layers, comp_seq_len, mask=False):
+    def __init__(self, comp_feat_len, num_heads, ff_size, dropout, num_layers, d_model, mask=False):
         super(Encoder, self).__init__()
         norm_encoder = torch.nn.LayerNorm(comp_feat_len)
         encoder_layer = torch.nn.TransformerEncoderLayer(
@@ -60,7 +61,7 @@ class Encoder(torch.nn.Module):
         self.Encoder = torch.nn.TransformerEncoder(
             encoder_layer, num_layers, norm_encoder)
         self.square_subsequent_mask = self.generate_square_subsequent_mask(
-            comp_seq_len) if mask else None
+            d_model) if mask else None
 
     def generate_square_subsequent_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
@@ -69,53 +70,55 @@ class Encoder(torch.nn.Module):
         return mask
 
     def forward(self, src):
-        # N x comp_seq_len x comp_feat_len
+        # N x d_model x comp_feat_len
         out = self.Encoder(src, mask=self.square_subsequent_mask)
         return out
 
 
 class InputLayer(torch.nn.Module):
-    def __init__(self, feat_len, seq_len, comp_feat_len, comp_seq_len,  dropout, pe_scale_factor):
+    def __init__(self, feat_len, seq_len, comp_feat_len, d_model,  dropout, pe_scale_factor):
         super(InputLayer, self).__init__()
         self.PositionalEncoding = PositionalEncoding(
             feat_len, seq_len, dropout, pe_scale_factor)
-        self.LinearFeatures = torch.nn.Linear(feat_len, comp_feat_len, bias=True)
-        
-        if seq_len != comp_seq_len:
+        self.LinearFeatures = torch.nn.Linear(
+            feat_len, comp_feat_len, bias=True)
+
+        if seq_len != d_model:
             self.time_compression = True
-            self.LinearTime = torch.nn.Linear(seq_len,comp_seq_len, bias=True)
+            self.LinearTime = torch.nn.Linear(seq_len, d_model, bias=True)
         else:
             self.time_compression = False
             self.LinearTime = None
-        
+
     def init_weights(self, initrange=0.1):
         self.LinearFeatures.bias.data.zero_()
         self.LinearFeatures.weight.data.uniform_(-initrange, initrange)
-        if self.time_commpression:
+        if self.time_compression:
             self.LinearTime.bias.data.zero_()
             self.LinearTime.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, src):
-        x = self.PositionalEncoding(src) # N x seq_len x feat_len
-        x = self.LinearFeatures(x) # N x seq_len x comp_feat_len
-        if self.time_compression
-            x = x.permute(0, 2, 1) # N x comp_feat_len x seq_len
-            x = self.LinearTime(x) # N x comp_feat_ln x comp_seq_len
-            x = x.permute(0, 2, 1) # N x comp_seq_len x comp_feat_len
-        return self.activation(x)
+        x = self.PositionalEncoding(src)  # N x seq_len x feat_len
+        x = self.LinearFeatures(x)  # N x seq_len x comp_feat_len
+        if self.time_compression:
+            x = x.permute(0, 2, 1)  # N x comp_feat_len x seq_len
+            x = self.LinearTime(x)  # N x comp_feat_ln x d_model
+            x = x.permute(0, 2, 1)  # N x d_model x comp_feat_len
+        return x
 
 
 class OutputLayer(torch.nn.Module):
-    def __init__(self, out_feat_len, out_seq_len, comp_feat_len, comp_seq_len):
+    def __init__(self, out_feat_len, out_seq_len, comp_feat_len, d_model):
         super(OutputLayer, self).__init__()
-        self.LinearFeatures = torch.nn.Linear(comp_feat_len, out_feat_len, bias=True)
-        if comp_seq_len != out_seq_len:
+        self.LinearFeatures = torch.nn.Linear(
+            comp_feat_len, out_feat_len, bias=True)
+        if d_model != out_seq_len:
             self.time_compression = True
-            self.LinearTime = torch.nn.Linear(comp_seq_len, out_seq_len, bias=True)
+            self.LinearTime = torch.nn.Linear(d_model, out_seq_len, bias=True)
         else:
             self.time_compression = False
             self.LinearTime = None
-        
+
     def init_weights(self, initrange=0.1):
         self.LinearFeatures.bias.data.zero_()
         self.LinearFeatures.weight.data.uniform_(-initrange, initrange)
@@ -124,11 +127,11 @@ class OutputLayer(torch.nn.Module):
             self.LinearTime.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, decoder_out):
-        y = self.LinearFeatures(decoder_out) # N x seq_len x out_feat_len
+        y = self.LinearFeatures(decoder_out)  # N x seq_len x out_feat_len
         if self.time_compression:
-            y = y.permute(0, 2, 1) # N x out_feat_len x seq_len
-            y = self.LinearTime(y) # N x out_feat_len x out_seq_len 
-            y = y.permute(0, 2, 1) # N x out_seq_len x out_feat_len
+            y = y.permute(0, 2, 1)  # N x out_feat_len x seq_len
+            y = self.LinearTime(y)  # N x out_feat_len x out_seq_len
+            y = y.permute(0, 2, 1)  # N x out_seq_len x out_feat_len
         return y
 
 
@@ -138,7 +141,7 @@ class TransformerAutoencoder(torch.nn.Module):
 
         self.id = kwargs.get("id", "")
         self.seq_len = kwargs.get("seq_len", 512)
-        self.comp_seq_len = kwargs.get("comp_seq_len", 32)
+        self.d_model = kwargs.get("d_model", 32)
         self.feat_len = kwargs.get("feat_len", 8)
         self.comp_feat_len = kwargs.get("comp_feat_len", 4)
         self.num_heads = kwargs.get("num_heads", 1)
@@ -149,23 +152,24 @@ class TransformerAutoencoder(torch.nn.Module):
         self.mask = kwargs.get("mask", False)
 
         self.InputLayerEncoder = InputLayer(
-            self.feat_len, self.seq_len, self.comp_feat_len, self.comp_seq_len, self.dropout, self.pe_scale_factor)
+            self.feat_len, self.seq_len, self.comp_feat_len, self.d_model, self.dropout, self.pe_scale_factor)
         self.Encoder = Encoder(
-            self.comp_feat_len, self.num_heads, self.ff_size, self.dropout, self.num_layers, self.comp_seq_len, self.mask)
-        self.OutputLayer = OutputLayer(self.feat_len, self.seq_len, self.comp_feat_len, self.comp_seq_len)
+            self.comp_feat_len, self.num_heads, self.ff_size, self.dropout, self.num_layers, self.d_model, self.mask)
+        self.OutputLayer = OutputLayer(
+            self.feat_len, self.seq_len, self.comp_feat_len, self.d_model)
 
         self.InputLayerEncoder.init_weights()
         self.OutputLayer.init_weights()
 
     def forward(self, src):
         # src N x seq_len x feat_len_src
-        x = self.InputLayerEncoder(src)  # N x comp_seq_len x comp_feat_len
-        memory = self.Encoder(x)  # N x comp_seq_len x comp_feat_len
-        return self.OutputLayer(memory) # N x out_seq_len x out_feat_len
-   
+        x = self.InputLayerEncoder(src)  # N x d_model x comp_feat_len
+        memory = self.Encoder(x)  # N x d_model x comp_feat_len
+        return self.OutputLayer(memory)  # N x out_seq_len x out_feat_len
+
     def forward_encoder(self, src):
-        x = self.InputLayerEncoder(src) # N x comp_seq_len x comp_feat_len
-        memory = self.Encoder(x) # N x comp_seq_len x comp_feat_len
+        x = self.InputLayerEncoder(src)  # N x d_model x comp_feat_len
+        memory = self.Encoder(x)  # N x d_model x comp_feat_len
         return memory
 
 
@@ -174,7 +178,7 @@ if __name__ == "__main__":
     feat_len = 8
     seq_len = 512
     comp_feat_len = 4
-    comp_seq_len = 32
+    d_model = 32
     num_heads = 1
     ff_size = 16
     dropout = 0.1
@@ -184,31 +188,31 @@ if __name__ == "__main__":
     print("test input layer")
     x = torch.randn(batch_size, seq_len, feat_len)
     input_layer = InputLayer(
-        feat_len, seq_len, comp_feat_len, comp_seq_len, dropout, pe_scale_factor)
+        feat_len, seq_len, comp_feat_len, d_model, dropout, pe_scale_factor)
     output = input_layer(x)
     print("input shape", x.shape)
     print("output shape", output.shape)
-    
-    assert output.shape == (batch_size, comp_seq_len, comp_feat_len)
+
+    assert output.shape == (batch_size, d_model, comp_feat_len)
 
     print("test output layer")
-    x = torch.randn(batch_size, comp_seq_len, comp_feat_len)
-    output_layer = OutputLayer(feat_len, seq_len, comp_feat_len, comp_seq_len)
+    x = torch.randn(batch_size, d_model, comp_feat_len)
+    output_layer = OutputLayer(feat_len, seq_len, comp_feat_len, d_model)
     output = output_layer(x)
     print("input shape", x.shape)
     print("output shape", output.shape)
     assert output.shape == (batch_size, seq_len, feat_len)
-    
+
     print("test model")
     x = torch.randn(batch_size, seq_len, feat_len)
     model = TransformerAutoencoder(
-        comp_seq_len = comp_seq_len,
+        d_model=d_model,
         comp_feat_len=comp_feat_len, feat_len=feat_len, num_heads=num_heads, ff_size=ff_size, dropout=dropout, num_layers=num_layers, seq_len=seq_len, pe_scale_factor=pe_scale_factor)
     output = model(x)
     memory = model.Encoder(model.InputLayerEncoder(x))
     print("Input shape:", x.shape)
     print("Output shape:", output.shape)
     print("Memory shape:", memory.shape)
-    
+
     assert output.shape == (batch_size, seq_len, feat_len)
-    assert memory.shape == (batch_size, comp_seq_len, comp_feat_len)
+    assert memory.shape == (batch_size, d_model, comp_feat_len)
