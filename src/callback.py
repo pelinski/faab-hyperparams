@@ -7,6 +7,9 @@ from pybela import Streamer
 from pythonosc.udp_client import SimpleUDPClient
 from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, find_closest_model, get_models_range
 
+# TODO add dc filtering to latent space?
+# TODO add envelopes to avoid clipping?
+
 class CallbackState:
     def __init__(self, seq_len, num_models, out_size, num_blocks_to_compute_avg, num_blocks_to_compute_std, hp_filter_freq,  num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None):
 
@@ -198,7 +201,7 @@ if __name__ == "__main__":
             'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
 
     cs = CallbackState(
-        seq_len=512,
+        seq_len=1024,
         num_models=20,
         out_size = 4,
         num_blocks_to_compute_avg=10,
@@ -212,7 +215,7 @@ if __name__ == "__main__":
         trigger_idx=4,
         running_norm=True,
         permute_out=False,
-        path="src/models/trained/transformer-autoencoder",
+        path="src/models/trained/transformer-autoencoder-jan",
         osc_ip = osc_ip,
         osc_port=osc_port
     )

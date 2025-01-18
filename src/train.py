@@ -5,10 +5,12 @@ import numpy as np
 from tqdm import tqdm
 from models import TransformerAutoencoder, LSTM
 from dataset import Dataset, DatasetPred
-from utils.utils import get_html_plot, load_hyperparams
+import pickle
+from utils.utils import get_html_plot, load_hyperparams, weighted_MSELoss
 
 
 hyperparameters, hp_path = load_hyperparams()
+feature_names = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4', 'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
 
 os.environ["WANDB_MODE"] = "online"  # testing
 
@@ -29,7 +31,7 @@ with wandb.init(project=hyperparameters["project"], config=hyperparameters,  set
         exit()
 
     train_dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=config.batch_size, shuffle=False)
+        dataset, batch_size=config.batch_size, shuffle=True)
 
     if config.model == "lstm":
         model = LSTM(feat_in_size=config.feat_in_size, feat_out_size=config.feat_in_size, ff_size=config.ff_size, num_layers=config.num_layers,
@@ -55,8 +57,15 @@ with wandb.init(project=hyperparameters["project"], config=hyperparameters,  set
             optimizer, step_size=config.scheduler_step_size, gamma=config.scheduler_gamma)
     else:
         scheduler = None
-
-    criterion = torch.nn.MSELoss(reduction='mean')
+        
+    if config.criterion == "mse":
+        criterion = torch.sqrt(torch.nn.MSELoss(reduction='mean'))
+    elif config.criterion == "weighted_mse":
+        weights_dict = pickle.load(open(config.weights_path, "rb"))
+        weights = torch.tensor([weights_dict[feature_names[i]] for i in range(8)]).to(config.device)
+        criterion = weighted_MSELoss(weights)
+    else:
+        raise ValueError("Invalid criterion")
 
     print("Running on device: {}".format(config.device))
     last_10_avg_batch_losses = []
@@ -69,6 +78,8 @@ with wandb.init(project=hyperparameters["project"], config=hyperparameters,  set
         train_it_losses = np.array([])
         html, plotter = "", 1  # plot only the sample of the first batch of the test set
         for batch_idx, (train_inputs, train_targets) in enumerate(tqdm(train_dataloader)):
+            
+            torch.cuda.empty_cache() # prevent cuda out of memory error
 
             # (batch_size, seq_len, feature_size)
             train_inputs, train_targets = train_inputs.to(
@@ -81,7 +92,7 @@ with wandb.init(project=hyperparameters["project"], config=hyperparameters,  set
                 out = model(train_inputs)
 
             optimizer.zero_grad(set_to_none=True)  # lower memory footprint
-            train_loss = torch.sqrt(criterion(out, train_targets))
+            train_loss = criterion(out, train_targets)
             train_it_losses = np.append(train_it_losses, train_loss.item())
             train_loss.backward()
 
@@ -96,7 +107,7 @@ with wandb.init(project=hyperparameters["project"], config=hyperparameters,  set
             if plotter:
                 plotter = 0
                 html = get_html_plot(
-                    out[:10], train_inputs[:10], dataset.feature_names)
+                    out[:10], train_inputs[:10], feature_names)
             if epoch % 50 == 0:
                 save_filename = os.path.join(
                     wandb.run.dir, f'transformer_run_{wandb.run.id}_{epoch}.model')

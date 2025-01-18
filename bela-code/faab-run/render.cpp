@@ -6,7 +6,7 @@
 
 #define NUM_SENSORS 8
 #define NUM_OUTPUTS 4
-#define MAX_EXPECTED_BUFFER_SIZE 512
+#define MAX_EXPECTED_BUFFER_SIZE 1024
 
 std::vector<Watcher<float>*> gFaabWatchers;
 std::vector<std::vector<float>> circularBuffers(NUM_OUTPUTS); // +1 for the modelUpdateClock

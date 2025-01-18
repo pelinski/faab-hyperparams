@@ -4,7 +4,7 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-wandb = "==0.16"
+wandb = "==0.19.4"
 biquad = "==0.4"
 pybela = "==2.0.1"
 python-osc = "*"

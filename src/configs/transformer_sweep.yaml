@@ -6,10 +6,10 @@ early_terminate:
   type: hyperband
   min_iter: 30
   eta: 3
-  max_iter: 500
+  max_iter: 100
 parameters:
   batch_size:
-    values: [32, 64, 128, 256]
+    values: [32, 64]
   ff_size:
     values: [8, 16, 32, 64, 128, 256]
   dropout:
@@ -26,11 +26,13 @@ parameters:
     distribution: "int_uniform"
     min: 1
     max: 8
+  # optimizer:
+  #   values: ["adam", "sgd"]
 command:
   - ${env}
   - python3
   - src/train.py
   - "-hp"
   - "src/configs/transformer.yaml"
-project: "faab_autoencoder_transformer"
+project: "faab_autoencoder_transformer_jan"
 description: ""
