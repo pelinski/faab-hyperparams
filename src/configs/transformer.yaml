@@ -4,6 +4,7 @@ pickle_path: "src/dataset/data/0117/0117_processed_1024.pkl"
 weights_path: "src/dataset/data/0117/weights.pkl"
 pred: False
 seq_len: 1024
+comp_seq_len: 1024
 batch_size: 64
 
 # common model parameters

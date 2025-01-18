@@ -25,7 +25,7 @@ dropout: 0.1
 epochs: 100
 optimizer: "rmsprop"
 criterion: "weighted_mse"
-learning_rate: 0.0001
+learning_rate: 0.001
 scheduler_step_size: 2
 scheduler_gamma: 0.1
 plotter_samples: 5

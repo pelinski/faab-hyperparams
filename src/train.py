@@ -10,7 +10,8 @@ from utils.utils import get_html_plot, load_hyperparams, weighted_MSELoss
 
 
 hyperparameters, hp_path = load_hyperparams()
-feature_names = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4', 'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
+feature_names = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',
+                 'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
 
 os.environ["WANDB_MODE"] = "online"  # testing
 
@@ -57,12 +58,13 @@ with wandb.init(project=hyperparameters["project"], config=hyperparameters,  set
             optimizer, step_size=config.scheduler_step_size, gamma=config.scheduler_gamma)
     else:
         scheduler = None
-        
+
     if config.criterion == "mse":
         criterion = torch.sqrt(torch.nn.MSELoss(reduction='mean'))
     elif config.criterion == "weighted_mse":
         weights_dict = pickle.load(open(config.weights_path, "rb"))
-        weights = torch.tensor([weights_dict[feature_names[i]] for i in range(8)]).to(config.device)
+        weights = torch.tensor([weights_dict[feature_names[i]]
+                               for i in range(8)]).to(config.device)
         criterion = weighted_MSELoss(weights)
     else:
         raise ValueError("Invalid criterion")
@@ -78,8 +80,8 @@ with wandb.init(project=hyperparameters["project"], config=hyperparameters,  set
         train_it_losses = np.array([])
         html, plotter = "", 1  # plot only the sample of the first batch of the test set
         for batch_idx, (train_inputs, train_targets) in enumerate(tqdm(train_dataloader)):
-            
-            torch.cuda.empty_cache() # prevent cuda out of memory error
+
+            torch.cuda.empty_cache()  # prevent cuda out of memory error
 
             # (batch_size, seq_len, feature_size)
             train_inputs, train_targets = train_inputs.to(
@@ -108,7 +110,7 @@ with wandb.init(project=hyperparameters["project"], config=hyperparameters,  set
                 plotter = 0
                 html = get_html_plot(
                     out[:10], train_inputs[:10], feature_names)
-            if epoch % 50 == 0:
+            if epoch % 25 == 0:
                 save_filename = os.path.join(
                     wandb.run.dir, f'transformer_run_{wandb.run.id}_{epoch}.model')
                 torch.save(model.state_dict(), save_filename)
