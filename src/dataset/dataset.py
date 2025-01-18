@@ -8,54 +8,42 @@ from pybela import Logger
 
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, pickle_path="", seq_len=0, hop_size=0, device=torch.device("cpu"), n_items=0, normalise=False):
+    def __init__(self, feature_names="", pickle_path="", seq_len=0, device=torch.device("cpu"), n_items=0, normalise = False):
         super().__init__()
-        self.pickle_path = pickle_path
+        self.feature_names = feature_names
+        self.pickle_path = pickle_path if type(pickle_path) == list else [pickle_path]
         self.device = device
-        self.timestamp = os.path.basename(pickle_path).split('_')[0]
-
+        self.timestamps = []
         # self._seq_len = seq_len
         self.seq_len = seq_len
         self.hop_size = hop_size
         # self._raw_data_tensor = None
-        self.feature_names = []
         # self.raw_data = {}
-        self.num_features = None
+        self.num_features = 8
         
-        with torch.no_grad():
+        self.inputs = torch.zeros(1,self.seq_len, self.num_features, dtype=torch.float32)
 
-            if pickle_path != "" and seq_len != 0:
-                _raw_data = self.load_data_from_pickle(self.pickle_path)
-                self.num_features = len(_raw_data.keys())
-                self.feature_names = list(_raw_data.keys())
+        if pickle_path != "" and seq_len != 0:
+            for _pickle_path in self.pickle_path:
+                self.timestamps.append(_pickle_path.split('/')[-1].split('_')[0])
+                _raw_data = self.load_data_from_pickle(_pickle_path)
 
                 _raw_data_tensor = self.process_raw_data_into_torch_tensor(
-                    _raw_data).to(self.device)
+                    _raw_data)
+                _data = _raw_data_tensor.unfold(
+                    1, self.seq_len, self.seq_len).permute(1, 2, 0).to(self.device)  # n, seq_len, num_features
                 
-
-                if hop_size != 0:
-                    _num_points = _raw_data_tensor.shape[1]
-                    total_sequences = _num_points // self.hop_size - 1
-                    self.inputs = torch.empty((total_sequences, _raw_data_tensor.size(0), seq_len), device=self.device)
-
-                    for i in tqdm(range(_num_points//self.hop_size-1)):
-                        start_idx = i * hop_size
-                        end_idx = start_idx + seq_len
-                        self.inputs[i] = _raw_data_tensor[:, start_idx:end_idx]  # n, num_features,  num_points // hop_size
-                    self.inputs = self.inputs.permute(0, 2, 1).to(self.device) # n, num_points // hop_size,  num_features
-                else:
-                    self.inputs = _raw_data_tensor.unfold(
-                        1, self.seq_len, self.seq_len).permute(1, 2, 0).to(self.device)  # n, seq_len, num_features
-                
-                
+                print(_data.shape)
+                self.inputs = torch.cat((self.inputs, _data), dim=0)
+                print(self.inputs.shape)
                 if n_items != 0:
                     assert n_items < len(
                         self.inputs), "n_items must be less than the number of samples in the dataset"
                     self.inputs = self.inputs[:n_items+1]
 
                 # normalise
-                if normalise:
-                    self.inputs = self.normalise(self.inputs)
+                # if normalise:
+                #     self.inputs = self.normalise(self.inputs)
 
     def process_raw_data_into_torch_tensor(self, _raw_data):
         _min_len = min([len(_raw_data[key])
@@ -127,8 +115,7 @@ class DatasetPred(Dataset):
     def __getitem__(self, idx):
         return self.inputs[idx], self.targets[idx]
 
-
-def convert_binary_dataset_to_dict(date, vars, save_as_pickle=True):
+def convert_binary_dataset_to_dict(date, vars, sample_rate, tail_to_remove_in_seconds=0,  save_as_pickle=True):
     data = {}
     raw_data = {}
 
@@ -138,15 +125,16 @@ def convert_binary_dataset_to_dict(date, vars, save_as_pickle=True):
         raw_data[var] = _data
 
         print(f"Processing {var}...")
+        
+        data[var] = [item for _buffer in _data["buffers"] for item in _buffer["data"]]
 
-        data[var] = [item for _buffer in _data["buffers"]
-                     for item in _buffer["data"]]
-        time = abs(raw_data[var]['buffers'][0]['ref_timestamp'] -
-                   raw_data[var]['buffers'][-1]['ref_timestamp'])/44100/60
-
-        print(
-            f'Processed {var} – {len(data[var])} points, {np.round(time,3)} min')
-
+        if tail_to_remove_in_seconds > 0:
+            data[var] = data[var][:-int(tail_to_remove_in_seconds * sample_rate/2)]
+            
+        time = len(data[var]) / (sample_rate / 2) / 60
+        
+        print(f'Processed {var} – {len(data[var])} points, {np.round(time,3)} min')
+        
     if save_as_pickle:
         filename = f'data/{date}/raw.pkl'
         with open(filename, 'wb') as file:

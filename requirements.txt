@@ -1,0 +1,149 @@
+biquad==0.4
+fqdn==1.5.1
+importlib-metadata==8.0.0
+isoduration==20.11.0
+jaraco.collections==5.1.0
+jsonpointer==3.0.0
+pandas==2.2.3
+pybela==1.0.2
+torch==2.2.2
+uri-template==1.3.0
+wandb==0.16.0
+webcolors==24.11.1
+# aiofiles==24.1.0 # Installed as dependency for pybela
+# anyio==4.6.2.post1 # Installed as dependency for httpx, jupyter-server
+# appdirs==1.4.4 # Installed as dependency for wandb
+# appnope==0.1.4 # Installed as dependency for ipykernel
+# argon2-cffi==23.1.0 # Installed as dependency for jupyter-server
+# argon2-cffi-bindings==21.2.0 # Installed as dependency for argon2-cffi
+# arrow==1.3.0 # Installed as dependency for isoduration
+# asttokens==2.4.1 # Installed as dependency for stack-data
+# async-lru==2.0.4 # Installed as dependency for jupyterlab
+# attrs==24.2.0 # Installed as dependency for jsonschema, referencing
+# autocommand==2.2.2 # Installed as dependency for jaraco.text
+# babel==2.16.0 # Installed as dependency for jupyterlab-server
+# backports.tarfile==1.2.0 # Installed as dependency for jaraco.context
+# bcrypt==4.2.0 # Installed as dependency for paramiko
+# beautifulsoup4==4.12.3 # Installed as dependency for nbconvert
+# bitarray==3.0.0 # Installed as dependency for pybela
+# bleach==6.2.0 # Installed as dependency for nbconvert, panel
+# bokeh==2.4.3 # Installed as dependency for jupyter-bokeh, panel, pybela
+# certifi==2024.8.30 # Installed as dependency for httpcore, httpx, requests, sentry-sdk
+# cffi==1.17.1 # Installed as dependency for argon2-cffi-bindings, cryptography, pynacl
+# charset-normalizer==3.4.0 # Installed as dependency for requests
+# click==8.1.7 # Installed as dependency for wandb
+# comm==0.2.2 # Installed as dependency for ipykernel, ipywidgets
+# cryptography==43.0.3 # Installed as dependency for paramiko
+# debugpy==1.8.8 # Installed as dependency for ipykernel
+# decorator==5.1.1 # Installed as dependency for ipython
+# defusedxml==0.7.1 # Installed as dependency for nbconvert
+# docker-pycreds==0.4.0 # Installed as dependency for wandb
+# exceptiongroup==1.2.2 # Installed as dependency for anyio, ipython
+# executing==2.1.0 # Installed as dependency for stack-data
+# fastjsonschema==2.20.0 # Installed as dependency for nbformat
+# filelock==3.16.1 # Installed as dependency for torch
+# fsspec==2024.10.0 # Installed as dependency for torch
+# gitdb==4.0.11 # Installed as dependency for gitpython
+# gitpython==3.1.43 # Installed as dependency for wandb
+# h11==0.14.0 # Installed as dependency for httpcore
+# httpcore==1.0.6 # Installed as dependency for httpx
+# httpx==0.27.2 # Installed as dependency for jupyterlab
+# idna==3.10 # Installed as dependency for anyio, httpx, requests
+# inflect==7.3.1 # Installed as dependency for jaraco.text
+# ipykernel==6.29.5 # Installed as dependency for jupyter, jupyter-console, jupyterlab, pybela
+# ipython==8.29.0 # Installed as dependency for ipykernel, ipywidgets, jupyter-console
+# ipywidgets==8.1.5 # Installed as dependency for jupyter, jupyter-bokeh
+# jaraco.context==5.3.0 # Installed as dependency for jaraco.text
+# jaraco.functools==4.0.1 # Installed as dependency for jaraco.text
+# jaraco.text==3.12.1 # Installed as dependency for jaraco.collections
+# jedi==0.19.2 # Installed as dependency for ipython
+# jinja2==3.1.4 # Installed as dependency for bokeh, jupyter-server, jupyterlab, jupyterlab-server, nbconvert, torch
+# json5==0.9.28 # Installed as dependency for jupyterlab-server
+# jsonschema==4.23.0 # Installed as dependency for jupyter-events, jupyterlab-server, nbformat
+# jsonschema-specifications==2024.10.1 # Installed as dependency for jsonschema
+# jupyter==1.1.1 # Installed as dependency for pybela
+# jupyter-bokeh==3.0.5 # Installed as dependency for pybela
+# jupyter-client==8.6.3 # Installed as dependency for ipykernel, jupyter-console, jupyter-server, nbclient
+# jupyter-console==6.6.3 # Installed as dependency for jupyter
+# jupyter-core==5.7.2 # Installed as dependency for ipykernel, jupyter-client, jupyter-console, jupyter-server, jupyterlab, nbclient, nbconvert, nbformat
+# jupyter-events==0.10.0 # Installed as dependency for jupyter-server
+# jupyter-lsp==2.2.5 # Installed as dependency for jupyterlab
+# jupyter-server==2.14.2 # Installed as dependency for jupyter-lsp, jupyterlab, jupyterlab-server, notebook, notebook-shim
+# jupyter-server-terminals==0.5.3 # Installed as dependency for jupyter-server
+# jupyterlab==4.2.5 # Installed as dependency for jupyter, notebook
+# jupyterlab-pygments==0.3.0 # Installed as dependency for nbconvert
+# jupyterlab-server==2.27.3 # Installed as dependency for jupyterlab, notebook
+# jupyterlab-widgets==3.0.13 # Installed as dependency for ipywidgets
+# llvmlite==0.43.0 # Installed as dependency for numba
+# markdown==3.7 # Installed as dependency for panel
+# markupsafe==3.0.2 # Installed as dependency for jinja2, nbconvert
+# matplotlib-inline==0.1.7 # Installed as dependency for ipykernel, ipython
+# mistune==3.0.2 # Installed as dependency for nbconvert
+# more-itertools==10.3.0 # Installed as dependency for inflect, jaraco.functools, jaraco.text
+# mpmath==1.3.0 # Installed as dependency for sympy
+# nbclient==0.10.0 # Installed as dependency for nbconvert
+# nbconvert==7.16.4 # Installed as dependency for jupyter, jupyter-server
+# nbformat==5.10.4 # Installed as dependency for jupyter-server, nbclient, nbconvert
+# nest-asyncio==1.6.0 # Installed as dependency for ipykernel, pybela
+# networkx==3.4.2 # Installed as dependency for torch
+# notebook==7.2.2 # Installed as dependency for jupyter, pybela
+# notebook-shim==0.2.4 # Installed as dependency for jupyterlab, notebook
+# numba==0.60.0 # Installed as dependency for biquad
+# numpy==1.26.0 # Installed as dependency for biquad, bokeh, numba, pandas, pybela
+# overrides==7.7.0 # Installed as dependency for jupyter-server
+# packaging==24.2 # Installed as dependency for bokeh, ipykernel, jupyter-server, jupyterlab, jupyterlab-server, nbconvert
+# pandocfilters==1.5.1 # Installed as dependency for nbconvert
+# panel==0.14.4 # Installed as dependency for pybela
+# param==2.1.1 # Installed as dependency for panel, pyct, pyviz-comms
+# paramiko==3.5.0 # Installed as dependency for pybela
+# parso==0.8.4 # Installed as dependency for jedi
+# pexpect==4.9.0 # Installed as dependency for ipython
+# pillow==11.0.0 # Installed as dependency for bokeh
+# platformdirs==4.3.6 # Installed as dependency for jupyter-core
+# prometheus-client==0.21.0 # Installed as dependency for jupyter-server
+# prompt-toolkit==3.0.48 # Installed as dependency for ipython, jupyter-console
+# protobuf==4.25.5 # Installed as dependency for wandb
+# psutil==6.1.0 # Installed as dependency for ipykernel, wandb
+# ptyprocess==0.7.0 # Installed as dependency for pexpect, terminado
+# pure-eval==0.2.3 # Installed as dependency for stack-data
+# pycparser==2.22 # Installed as dependency for cffi
+# pyct==0.5.0 # Installed as dependency for panel
+# pygments==2.18.0 # Installed as dependency for ipython, jupyter-console, nbconvert
+# pynacl==1.5.0 # Installed as dependency for paramiko
+# python-dateutil==2.9.0.post0 # Installed as dependency for arrow, jupyter-client, pandas
+# python-json-logger==2.0.7 # Installed as dependency for jupyter-events
+# pytz==2024.2 # Installed as dependency for pandas
+# pyviz-comms==3.0.3 # Installed as dependency for panel
+# pyyaml==6.0.2 # Installed as dependency for bokeh, jupyter-events, wandb
+# pyzmq==26.2.0 # Installed as dependency for ipykernel, jupyter-client, jupyter-console, jupyter-server
+# referencing==0.35.1 # Installed as dependency for jsonschema, jsonschema-specifications, jupyter-events
+# requests==2.32.3 # Installed as dependency for jupyterlab-server, panel, wandb
+# rfc3339-validator==0.1.4 # Installed as dependency for jupyter-events
+# rfc3986-validator==0.1.1 # Installed as dependency for jupyter-events
+# rpds-py==0.21.0 # Installed as dependency for jsonschema, referencing
+# send2trash==1.8.3 # Installed as dependency for jupyter-server
+# sentry-sdk==2.18.0 # Installed as dependency for wandb
+# setproctitle==1.3.3 # Installed as dependency for wandb
+# six==1.16.0 # Installed as dependency for asttokens, docker-pycreds, python-dateutil, rfc3339-validator
+# smmap==5.0.1 # Installed as dependency for gitdb
+# sniffio==1.3.1 # Installed as dependency for anyio, httpx
+# soupsieve==2.6 # Installed as dependency for beautifulsoup4
+# stack-data==0.6.3 # Installed as dependency for ipython
+# sympy==1.13.3 # Installed as dependency for torch
+# terminado==0.18.1 # Installed as dependency for jupyter-server, jupyter-server-terminals
+# tinycss2==1.4.0 # Installed as dependency for nbconvert
+# tomli==2.1.0 # Installed as dependency for jupyterlab
+# tornado==6.4.1 # Installed as dependency for bokeh, ipykernel, jupyter-client, jupyter-server, jupyterlab, notebook, terminado
+# tqdm==4.67.0 # Installed as dependency for panel
+# traitlets==5.14.3 # Installed as dependency for comm, ipykernel, ipython, ipywidgets, jupyter-client, jupyter-console, jupyter-core, jupyter-events, jupyter-server, jupyterlab, matplotlib-inline, nbclient, nbconvert, nbformat
+# typeguard==4.3.0 # Installed as dependency for inflect
+# types-python-dateutil==2.9.0.20241003 # Installed as dependency for arrow
+# typing-extensions==4.12.2 # Installed as dependency for anyio, async-lru, bokeh, ipython, panel, torch, typeguard
+# tzdata==2024.2 # Installed as dependency for pandas
+# urllib3==2.2.3 # Installed as dependency for requests, sentry-sdk
+# wcwidth==0.2.13 # Installed as dependency for prompt-toolkit
+# webencodings==0.5.1 # Installed as dependency for bleach, tinycss2
+# websocket-client==1.8.0 # Installed as dependency for jupyter-server
+# websockets==12.0 # Installed as dependency for pybela
+# widgetsnbextension==4.0.13 # Installed as dependency for ipywidgets
+# zipp==3.19.2 # Installed as dependency for importlib-metadata

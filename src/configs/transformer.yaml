@@ -1,10 +1,10 @@
 project: "faab_autoencoder_transformer"
 # dataset parameters
-pickle_path: "data/0117/0117_processed_1024.pkl"
+pickle_path: "src/dataset/data/0117/0117_processed_1024.pkl"
+weights_path: "src/dataset/data/0117/weights.pkl"
 pred: False
 seq_len: 1024
-comp_seq_len: 1024
-batch_size: 32
+batch_size: 64
 
 # common model parameters
 feat_len: 8 # feature size
@@ -23,7 +23,7 @@ max_grad_norm: 0
 dropout: 0
 epochs: 150
 optimizer: "rmsprop"
-criterion:
+criterion: "weighted_mse"
 learning_rate: 0.0001
 scheduler_step_size: 0
 scheduler_gamma: 0.1

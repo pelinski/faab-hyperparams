@@ -80,21 +80,28 @@ class InputLayer(torch.nn.Module):
         self.PositionalEncoding = PositionalEncoding(
             feat_len, seq_len, dropout, pe_scale_factor)
         self.LinearFeatures = torch.nn.Linear(feat_len, comp_feat_len, bias=True)
-        self.LinearTime = torch.nn.Linear(seq_len,comp_seq_len, bias=True)
-        self.activation = torch.nn.Sigmoid()
+        
+        if seq_len != comp_seq_len:
+            self.time_compression = True
+            self.LinearTime = torch.nn.Linear(seq_len,comp_seq_len, bias=True)
+        else:
+            self.time_compression = False
+            self.LinearTime = None
         
     def init_weights(self, initrange=0.1):
         self.LinearFeatures.bias.data.zero_()
         self.LinearFeatures.weight.data.uniform_(-initrange, initrange)
-        self.LinearTime.bias.data.zero_()
-        self.LinearTime.weight.data.uniform_(-initrange, initrange)
+        if self.time_commpression:
+            self.LinearTime.bias.data.zero_()
+            self.LinearTime.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, src):
         x = self.PositionalEncoding(src) # N x seq_len x feat_len
         x = self.LinearFeatures(x) # N x seq_len x comp_feat_len
-        x = x.permute(0, 2, 1) # N x comp_feat_len x seq_len
-        x = self.LinearTime(x) # N x comp_feat_ln x comp_seq_len
-        x = x.permute(0, 2, 1) # N x comp_seq_len x comp_feat_len
+        if self.time_compression
+            x = x.permute(0, 2, 1) # N x comp_feat_len x seq_len
+            x = self.LinearTime(x) # N x comp_feat_ln x comp_seq_len
+            x = x.permute(0, 2, 1) # N x comp_seq_len x comp_feat_len
         return self.activation(x)
 
 
@@ -102,21 +109,27 @@ class OutputLayer(torch.nn.Module):
     def __init__(self, out_feat_len, out_seq_len, comp_feat_len, comp_seq_len):
         super(OutputLayer, self).__init__()
         self.LinearFeatures = torch.nn.Linear(comp_feat_len, out_feat_len, bias=True)
-        self.LinearTime = torch.nn.Linear(comp_seq_len, out_seq_len, bias=True)
-        self.activation = torch.nn.Sigmoid()
+        if comp_seq_len != out_seq_len:
+            self.time_compression = True
+            self.LinearTime = torch.nn.Linear(comp_seq_len, out_seq_len, bias=True)
+        else:
+            self.time_compression = False
+            self.LinearTime = None
         
     def init_weights(self, initrange=0.1):
         self.LinearFeatures.bias.data.zero_()
         self.LinearFeatures.weight.data.uniform_(-initrange, initrange)
-        self.LinearTime.bias.data.zero_()
-        self.LinearTime.weight.data.uniform_(-initrange, initrange)
+        if self.time_compression:
+            self.LinearTime.bias.data.zero_()
+            self.LinearTime.weight.data.uniform_(-initrange, initrange)
 
     def forward(self, decoder_out):
         y = self.LinearFeatures(decoder_out) # N x seq_len x out_feat_len
-        y = y.permute(0, 2, 1) # N x out_feat_len x seq_len
-        y = self.LinearTime(y) # N x out_feat_len x out_seq_len 
-        y = y.permute(0, 2, 1) # N x out_seq_len x out_feat_len
-        return self.activation(y)
+        if self.time_compression:
+            y = y.permute(0, 2, 1) # N x out_feat_len x seq_len
+            y = self.LinearTime(y) # N x out_feat_len x out_seq_len 
+            y = y.permute(0, 2, 1) # N x out_seq_len x out_feat_len
+        return y
 
 
 class TransformerAutoencoder(torch.nn.Module):

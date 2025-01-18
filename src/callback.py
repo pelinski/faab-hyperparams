@@ -1,22 +1,28 @@
 import torch
 import numpy as np
-import asyncio
 import biquad
+import argparse
 from collections import deque  # circular buffers
 from scipy.interpolate import interp1d
 from pybela import Streamer
-from utils import load_model, get_device, get_sorted_models, get_models_coordinates, find_closest_model, get_models_range, get_all_configs
+from pythonosc.udp_client import SimpleUDPClient
+from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, find_closest_model, get_models_range
 
+# TODO add dc filtering to latent space?
+# TODO add envelopes to avoid clipping?
 
 class CallbackState:
-    def __init__(self, seq_len, num_models, num_blocks_to_compute_avg, num_blocks_to_compute_std, filter,  num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path):
+    def __init__(self, seq_len, num_models, out_size, num_blocks_to_compute_avg, num_blocks_to_compute_std, out_hp_filter_freq, out_lp_filter_freq, envelope_len, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None):
 
         # -- params --
         self.seq_len = seq_len
         self.num_models = num_models
+        self.out_size = out_size
         self.num_blocks_to_compute_avg = num_blocks_to_compute_avg
         self.num_blocks_to_compute_std = num_blocks_to_compute_std
-        self.filter = filter
+        self.out_hp_filter_freq = out_hp_filter_freq
+        self.out_lp_filter_freq = out_lp_filter_freq
+        self.envelope_len = envelope_len # for envelopes when changing model
         self.num_of_iterations_in_this_model_check = num_of_iterations_in_this_model_check
         self.init_ratio_rising_threshold = init_ratio_rising_threshold
         self.init_ratio_falling_threshold = init_ratio_falling_threshold
@@ -27,7 +33,12 @@ class CallbackState:
         self.permute_out = permute_out
         self.device = get_device()
         self.path = path
-        self.sound_threshold = 0.021
+        self.osc_ip, self.osc_port = osc_ip, osc_port
+        self.osc_client = None
+        
+        # init osc server 
+        if self.osc_ip and self.osc_port:
+            self.osc_client = SimpleUDPClient(self.osc_ip, self.osc_port)  
 
         # init models
 
@@ -42,17 +53,21 @@ class CallbackState:
                 self.device), "max": torch.FloatTensor([0, 0, 0, 0]).to(self.device)}
 
         # model space
-        # min and max of model outputs (after passing the whole dataset)
-        if not running_norm:
-            self.full_dataset_models_range = get_models_range(path=path)
-        else:
-            self.full_dataset_models_range = None
+        # min and max of model outputs (after passing the full dataset)
+        self.full_dataset_models_range = get_models_range(path=path)
         # model's chosen 4 hyperparameters mapped to values between 0 and 1
         self.models_coordinates = get_models_coordinates(
             path=path, sorted=True, num_models=num_models)
         starter_id = sorted_models[-1]  # h0o65m8s is nice
         
-        self.models_configs = get_all_configs(path=path, num_models=num_models, epoch=500)
+        # filters
+        self.bridge_filter = biquad.lowpass(sr=streamer.sample_rate, f=1, q=0.707)
+        self.out_hp = [biquad.highpass(sr=streamer.sample_rate, f=out_hp_filter_freq, q=0.707) for _ in range(out_size)]
+        self.out_lp = [biquad.lowpass(sr=streamer.sample_rate, f=out_lp_filter_freq, q=0.707) for _ in range(out_size)]
+        
+        #envelope
+        self.envelope_len = envelope_len
+        
 
         # variables for the callback
         self.model = self.models[starter_id]
@@ -66,14 +81,14 @@ class CallbackState:
         self.debug_counter = 0
         self.model_perm = [0, 1, 2, 3]
 
+# sound_threshold =0.021
+
 
 async def callback(block, cs, streamer):
 
     with torch.no_grad():
-
-        _raw_data_tensor = torch.stack([torch.FloatTensor(
-            buffer["buffer"]["data"]) for buffer in block])  # num_features, 1024
-        # split the data into seq_len to feed it into the model
+        _raw_data_tensor = torch.stack([torch.as_tensor(buffer["buffer"]["data"], dtype=torch.float32) for buffer in block]) # num_features, 1024
+        # # split the data into seq_len to feed it into the model
         inputs = _raw_data_tensor.unfold(1, cs.seq_len, cs.seq_len).permute(
             1, 2, 0)  # n, seq_len, num_features
 
@@ -94,7 +109,7 @@ async def callback(block, cs, streamer):
 
                 _min, _max = cs.models_running_range[cs.model.id]["min"], cs.models_running_range[cs.model.id]["max"]
 
-            # absolute normalisation (taking max and min from passing the full dataset)
+            # absolute normalisation (taking max and min from passing the full dataset) 
             else:
                 _model_range = cs.full_dataset_models_range[cs.model.id]
                 _min, _max = torch.FloatTensor(_model_range["min"]).to(
@@ -103,26 +118,27 @@ async def callback(block, cs, streamer):
             # -- normalise before sending to Bela!! --
             normalised_out = (out - _min.unsqueeze(1)) / \
                 (_max - _min).unsqueeze(1)
-
+                
             # permute output
             if cs.permute_out:
                 normalised_out = normalised_out[cs.model_perm]
-                
-            if cs.seq_len == 1024:
-                original_indices = np.linspace(0,1, num=normalised_out.shape[1])
-                new_indices = np.linspace(0,1, num=cs.seq_len)
-                cubic_interpolator = interp1d(original_indices, normalised_out.detach().cpu(), kind='cubic', axis=1)
-                out_to_send = cubic_interpolator(new_indices)
-            
-            else:
-                out_to_send = normalised_out
 
             # send each feature to Bela
-            for idx, feature in enumerate(out_to_send):
-                streamer.send_buffer(idx, 'f', cs.seq_len, feature.tolist())
+            for idx, feature in enumerate(normalised_out):
+                # dc filter
+                filtered_out = cs.out_hp[idx](feature.cpu())
+                filtered_out = cs.out_lp[idx](filtered_out).tolist()
+                
+                #envelope # TODO
+                #filtered_out = 
+
+                if cs.osc_client:
+                    cs.osc_client.send_message(f'/f{idx+1}', filtered_out)
+                else:
+                    streamer.send_buffer(idx, 'f', cs.seq_len, filtered_out)
 
             # -- amplitude --
-            _bridge_piezo = cs.filter(block[5]["buffer"]["data"])
+            _bridge_piezo = cs.bridge_filter(block[5]["buffer"]["data"])
             cs.bridge_piezo_avg.append(np.average(_bridge_piezo))
             weighted_avg_bridge_piezo = np.average(
                 cs.bridge_piezo_avg, weights=range(1, len(cs.bridge_piezo_avg)+1))
@@ -183,6 +199,14 @@ async def callback(block, cs, streamer):
 
 if __name__ == "__main__":
 
+    parser = argparse.ArgumentParser(description="faab-callback")
+    parser.add_argument('--osc', action='store_true', help='Use OSC server')
+    args = parser.parse_args()
+    if args.osc:
+        osc_ip, osc_port = "127.0.0.1", 2222
+    else:
+        osc_ip, osc_port = None, None
+    
     streamer = Streamer()
     streamer.connect()
     vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',
@@ -191,23 +215,27 @@ if __name__ == "__main__":
     cs = CallbackState(
         seq_len=1024,
         num_models=20,
+        out_size = 4,
         num_blocks_to_compute_avg=10,
         num_blocks_to_compute_std=40,
-        filter=biquad.lowpass(sr=streamer.sample_rate, f=1, q=0.707),
-        num_of_iterations_in_this_model_check=20,
+        out_hp_filter_freq=10,
+        out_lp_filter_freq=5000,
+        envelope_len=256
+        num_of_iterations_in_this_model_check=100,
         init_ratio_rising_threshold=2.5,
         init_ratio_falling_threshold=1.3,
-        threshold_leak=0.1,
+        threshold_leak=0.01,
         trigger_width=25,
         trigger_idx=4,
         running_norm=True,
-        permute_out=True,
-        path="src/models/trained/transformer-autoencoder-time"
+        permute_out=False,
+        path="src/models/trained/transformer-autoencoder-jan",
+        osc_ip = osc_ip,
+        osc_port=osc_port
     )
 
+    
     streamer.start_streaming(
         vars, on_block_callback=callback, callback_args=(cs, streamer))
 
-    async def wait_forever():
-        await asyncio.Future()
-    asyncio.run(wait_forever())
+    streamer.wait(0)
