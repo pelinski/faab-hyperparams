@@ -206,8 +206,8 @@ def load_model(_id, path='src/models/trained'):
     id_ep = json.load(open(f'{path}/id_ep.json'))
     epochs = id_ep[_id]
     config = load_config(_id, epochs, path)
-    model = TransformerAutoencoder(comp_feat_len=config["comp_feat_len"], feat_len=config["feat_len"], num_heads=config["num_heads"], ff_size_features=config["ff_size_features"],
-                                   dropout=config["dropout"], num_layers=config["num_layers"], max_len=config["seq_len"], pe_scale_factor=config["pe_scale_factor"], mask=config["mask"], id=_id)
+    model = TransformerAutoencoder(comp_feat_len=config["comp_feat_len"], comp_seq_len=config["comp_seq_len"], feat_len=config["feat_len"], num_heads=config["num_heads"], ff_size_features=config["ff_size_features"], ff_size_time=config["ff_size_time"],
+                                   dropout=config["dropout"], num_layers=config["num_layers"], seq_len=config["seq_len"], pe_scale_factor=config["pe_scale_factor"], mask=config["mask"], id=_id)
     model.load_state_dict(torch.load(
         f'{path}/transformer_run_{_id}_{epochs}.model', map_location=get_device()))
     model = model.to(get_device())
@@ -249,7 +249,7 @@ def find_closest_model(output_coordinates, scaled_model_coordinates):
     return closest_model, closest_model_coordinates
 
 
-def _scale_params(epochs={}, path='src/models/trained',):
+def _scale_params(epochs={}, path='src/models/trained', timecomp=False):
     """Maps the hyperparameters of the trained models to a 0-1 scale.
 
     Args:
@@ -260,30 +260,50 @@ def _scale_params(epochs={}, path='src/models/trained',):
         dict of lists: Returns a dict with the scaled hyperparameters in the following order: ff_size_features, num_heads, num_layers, learning_rate
     """
     run_ids = get_all_run_ids(path)
-    params = ["ff_size_features", "num_heads", "num_layers", "learning_rate"]
+    if not timecomp:
+        params = ["ff_size_features", "num_heads",
+                  "num_layers", "learning_rate"]
+    else:
+        params = ["ff_size_features", "ff_size_time",
+                  "comp_seq_len", "learning_rate"]
 
     _id_config = {}
     for _id in run_ids:
         _id_config[_id] = {key: load_config(_id, epochs[_id], path)[
             key] for key in params}
 
-    ranges, mapped_ranges = {
-        "ff_size_features": [8, 16, 32, 64, 128, 256],
-        "num_heads": [1, 2, 4],
-        "num_layers": [1, 2, 3, 4, 5, 6, 7, 8]
-    }, {}
+    mapped_ranges = {}
+    if not timecomp:
+        ranges = {
+            "ff_size_features": [8, 16, 32, 64, 128, 256],
+            "num_heads": [1, 2, 4],
+            "num_layers": [1, 2, 3, 4, 5, 6, 7, 8]
+        }
+        column_functions = {
+            "ff_size_features": lambda x: mapped_ranges["ff_size_features"][x],
+            "num_heads": lambda x: mapped_ranges["num_heads"][x],
+            "num_layers": lambda x: mapped_ranges["num_layers"][x],
+            "learning_rate": lambda x: x*1000
+        }
+    else:
+        ranges = {
+            "ff_size_features": [8, 16, 32, 64, 128],
+            "ff_size_time": [512, 1024, 2048],
+            "comp_seq_len": [128, 256, 512],
+        }
+        column_functions = {
+            "ff_size_features": lambda x: mapped_ranges["ff_size_features"][x],
+            "ff_size_time": lambda x: mapped_ranges["ff_size_time"][x],
+            "comp_seq_len": lambda x: mapped_ranges["comp_seq_len"][x],
+            "learning_rate": lambda x: x*1000
+        }
     for key in ranges:
         mapped_ranges[key] = {
             value: idx / (len(ranges[key])-1) for idx, value in enumerate(ranges[key])}
 
     # Apply a different function to each column
     df = pd.DataFrame.from_dict(_id_config, orient='index')
-    column_functions = {
-        "ff_size_features": lambda x: mapped_ranges["ff_size_features"][x],
-        "num_heads": lambda x: mapped_ranges["num_heads"][x],
-        "num_layers": lambda x: mapped_ranges["num_layers"][x],
-        "learning_rate": lambda x: x*1000
-    }
+
     for column, func in column_functions.items():
         if column in df.columns:
             df[column] = df[column].apply(func)

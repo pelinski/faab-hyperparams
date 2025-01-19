@@ -52,8 +52,7 @@ class CallbackState:
         self.permute_out = permute_out
         self.device = get_device()
         self.path = path
-        self.osc_ip,
-        self.osc_port = osc_ip, osc_port
+        self.osc_ip, self.osc_port = osc_ip, osc_port
         self.osc_client = None
 
         # init osc server
@@ -148,17 +147,30 @@ async def callback(block, cs, streamer):
 
             # send each feature to Bela
             for idx, feature in enumerate(normalised_out):
+
+                y = feature.detach().cpu()
+
                 # dc filter
-                filtered_out = cs.out_hp[idx](feature.cpu())
-                filtered_out = cs.out_lp[idx](filtered_out).tolist()
+                y = cs.out_hp[idx](y)
+                y = cs.out_lp[idx](y)
+
+                if cs.seq_len != cs.model.comp_seq_len:
+                    original_indices = np.linspace(
+                        0, 1, num=cs.model.comp_seq_len)
+                    new_indices = np.linspace(0, 1, num=cs.seq_len)
+                    cubic_interpolator = interp1d(
+                        original_indices, y, kind='cubic', axis=0)
+                    y = cubic_interpolator(new_indices)
 
                 # envelope # TODO
-                # filtered_out =
+                # filtered__out =
+
+                _out = y.tolist()
 
                 if cs.osc_client:
-                    cs.osc_client.send_message(f'/f{idx+1}', filtered_out)
+                    cs.osc_client.send_message(f'/f{idx+1}', _out)
                 else:
-                    streamer.send_buffer(idx, 'f', cs.seq_len, filtered_out)
+                    streamer.send_buffer(idx, 'f', cs.seq_len, _out)
 
             # -- amplitude --
             _bridge_piezo = cs.bridge_filter(block[5]["buffer"]["data"])
@@ -181,11 +193,10 @@ async def callback(block, cs, streamer):
 
             # is it time to change model?
             ratio = weighted_model_out_std / weighted_avg_bridge_piezo
-            if (weighted_avg_bridge_piezo > cs.sound_threshold):  # pnly leaky thresholds if sound
-                if (ratio > cs.ratio_rising_threshold and past_change_model == 0):
-                    cs.change_model = 1
-                elif (ratio < cs.ratio_falling_threshold and past_change_model == 1):
-                    cs.change_model = 0
+            if (ratio > cs.ratio_rising_threshold and past_change_model == 0):
+                cs.change_model = 1
+            elif (ratio < cs.ratio_falling_threshold and past_change_model == 1):
+                cs.change_model = 0
 
             cs.debug_counter += 1  # for debugging
             if (cs.debug_counter % 20 == 0):
@@ -252,7 +263,7 @@ if __name__ == "__main__":
         trigger_idx=4,
         running_norm=True,
         permute_out=False,
-        path="src/models/trained/transformer-autoencoder-jan",
+        path="src/models/trained/transformer-autoencoder-timecomp-jan",
         osc_ip=osc_ip,
         osc_port=osc_port
     )
