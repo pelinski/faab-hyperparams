@@ -27,7 +27,7 @@ parameters:
   num_layers:
     distribution: "int_uniform"
     min: 1
-    max: 2
+    max: 3
   comp_seq_len:
     values: [128, 256, 512]
   # optimizer:
