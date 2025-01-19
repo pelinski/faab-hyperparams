@@ -48,8 +48,10 @@ def load_hyperparams():
                         default=8, type=int)
     parser.add_argument("--comp_feat_len", help="model dimension",
                         default=4, type=int)
-    parser.add_argument("--ff_size", help="ff size",
+    parser.add_argument("--ff_size_features", help="ff size features",
                         default=12, type=int)
+    parser.add_argument("--ff_size_time", help="ff size time",
+                        default=512, type=int)
     parser.add_argument("--num_layers", help="number of layers",
                         default=4, type=int)
     parser.add_argument("--model", help="model",
@@ -97,7 +99,8 @@ def load_hyperparams():
                    "feat_len": hp["feat_len"] if "feat_len" in hp else args.feat_len,
                    "comp_feat_len": hp["comp_feat_len"] if "comp_feat_len" in hp else args.comp_feat_len,
                    "comp_seq_len": hp["comp_seq_len"] if "comp_seq_len" in hp else args.comp_seq_len,
-                   "ff_size": hp["ff_size"] if "ff_size" in hp else args.ff_size,
+                   "ff_size_features": hp["ff_size_features"] if "ff_size_features" in hp else args.ff_size_features,
+                   "ff_size_time": hp["ff_size_time"] if "ff_size_time" in hp else args.ff_size_time,
                    "num_layers": hp["num_layers"] if "num_layers" in hp else args.num_layers,
                    "model": hp["model"] if "model" in hp else args.model,
                    "max_grad_norm": hp["max_grad_norm"] if "max_grad_norm" in hp else args.max_grad_norm,
@@ -203,7 +206,7 @@ def load_model(_id, path='src/models/trained'):
     id_ep = json.load(open(f'{path}/id_ep.json'))
     epochs = id_ep[_id]
     config = load_config(_id, epochs, path)
-    model = TransformerAutoencoder(comp_feat_len=config["comp_feat_len"], feat_len=config["feat_len"], num_heads=config["num_heads"], ff_size=config["ff_size"],
+    model = TransformerAutoencoder(comp_feat_len=config["comp_feat_len"], feat_len=config["feat_len"], num_heads=config["num_heads"], ff_size_features=config["ff_size_features"],
                                    dropout=config["dropout"], num_layers=config["num_layers"], max_len=config["seq_len"], pe_scale_factor=config["pe_scale_factor"], mask=config["mask"], id=_id)
     model.load_state_dict(torch.load(
         f'{path}/transformer_run_{_id}_{epochs}.model', map_location=get_device()))
@@ -254,10 +257,10 @@ def _scale_params(epochs={}, path='src/models/trained',):
         path (str, optional): Path where the models are. Defaults to 'src/models/trained'.
 
     Returns:
-        dict of lists: Returns a dict with the scaled hyperparameters in the following order: ff_size, num_heads, num_layers, learning_rate
+        dict of lists: Returns a dict with the scaled hyperparameters in the following order: ff_size_features, num_heads, num_layers, learning_rate
     """
     run_ids = get_all_run_ids(path)
-    params = ["ff_size", "num_heads", "num_layers", "learning_rate"]
+    params = ["ff_size_features", "num_heads", "num_layers", "learning_rate"]
 
     _id_config = {}
     for _id in run_ids:
@@ -265,7 +268,7 @@ def _scale_params(epochs={}, path='src/models/trained',):
             key] for key in params}
 
     ranges, mapped_ranges = {
-        "ff_size": [8, 16, 32, 64, 128, 256],
+        "ff_size_features": [8, 16, 32, 64, 128, 256],
         "num_heads": [1, 2, 4],
         "num_layers": [1, 2, 3, 4, 5, 6, 7, 8]
     }, {}
@@ -276,7 +279,7 @@ def _scale_params(epochs={}, path='src/models/trained',):
     # Apply a different function to each column
     df = pd.DataFrame.from_dict(_id_config, orient='index')
     column_functions = {
-        "ff_size": lambda x: mapped_ranges["ff_size"][x],
+        "ff_size_features": lambda x: mapped_ranges["ff_size_features"][x],
         "num_heads": lambda x: mapped_ranges["num_heads"][x],
         "num_layers": lambda x: mapped_ranges["num_layers"][x],
         "learning_rate": lambda x: x*1000

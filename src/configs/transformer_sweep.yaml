@@ -10,7 +10,7 @@ early_terminate:
 parameters:
   batch_size:
     values: [32, 64]
-  ff_size:
+  ff_size_features:
     values: [8, 16, 32, 64, 128, 256]
   dropout:
     distribution: "uniform"

@@ -53,14 +53,14 @@ class PositionalEncoding(torch.nn.Module):
 
 
 class Encoder(torch.nn.Module):
-    def __init__(self, comp_feat_len, num_heads, ff_size, dropout, num_layers, comp_seq_len, mask=False):
+    def __init__(self, comp_feat_len, num_heads, ff_size_features, ff_size_time, dropout, num_layers, comp_seq_len, mask=False):
         super(Encoder, self).__init__()
         norm_feature_encoder = torch.nn.LayerNorm(comp_feat_len)
         norm_time_encoder = torch.nn.LayerNorm(comp_seq_len)
         feature_encoder_layer = torch.nn.TransformerEncoderLayer(
-            comp_feat_len, num_heads, ff_size, dropout, activation="gelu", batch_first=True)
+            comp_feat_len, num_heads, ff_size_features, dropout, activation="gelu", batch_first=True)
         time_encoder_layer = torch.nn.TransformerEncoderLayer(
-            comp_seq_len, num_heads, ff_size, dropout, activation="gelu", batch_first=True)
+            comp_seq_len, num_heads, ff_size_time, dropout, activation="gelu", batch_first=True)
         self.FeatureEncoder = torch.nn.TransformerEncoder(
             feature_encoder_layer, num_layers, norm_feature_encoder)
         self.TimeEncoder = torch.nn.TransformerEncoder(
@@ -138,7 +138,8 @@ class TransformerAutoencoder(torch.nn.Module):
         self.feat_len = kwargs.get("feat_len", 8)
         self.comp_feat_len = kwargs.get("comp_feat_len", 4)
         self.num_heads = kwargs.get("num_heads", 1)
-        self.ff_size = kwargs.get("ff_size", 16)
+        self.ff_size_features = kwargs.get("ff_size_features", 16)
+        self.ff_size_time = kwargs.get("ff_size_time", 512)
         self.dropout = kwargs.get("dropout", 0.1)
         self.num_layers = kwargs.get("num_layers", 3)
         self.pe_scale_factor = kwargs.get("pe_scale_factor", 1.0)
@@ -147,7 +148,7 @@ class TransformerAutoencoder(torch.nn.Module):
         self.InputLayerEncoder = InputLayer(
             self.feat_len, self.seq_len, self.comp_feat_len, self.comp_seq_len, self.dropout, self.pe_scale_factor)
         self.Encoder = Encoder(
-            self.comp_feat_len, self.num_heads, self.ff_size, self.dropout, self.num_layers, self.comp_seq_len, self.mask)
+            self.comp_feat_len, self.num_heads, self.ff_size_features, self.ff_size_time, self.dropout, self.num_layers, self.comp_seq_len, self.mask)
         self.OutputLayer = OutputLayer(
             self.feat_len, self.seq_len, self.comp_feat_len, self.comp_seq_len)
 
@@ -173,7 +174,7 @@ if __name__ == "__main__":
     comp_feat_len = 4
     comp_seq_len = 32
     num_heads = 1
-    ff_size = 16
+    ff_size_features = 16
     dropout = 0.1
     num_layers = 3
     pe_scale_factor = 1.0
@@ -200,7 +201,7 @@ if __name__ == "__main__":
     x = torch.randn(batch_size, seq_len, feat_len)
     model = TransformerAutoencoder(
         comp_seq_len=comp_seq_len,
-        comp_feat_len=comp_feat_len, feat_len=feat_len, num_heads=num_heads, ff_size=ff_size, dropout=dropout, num_layers=num_layers, seq_len=seq_len, pe_scale_factor=pe_scale_factor)
+        comp_feat_len=comp_feat_len, feat_len=feat_len, num_heads=num_heads, ff_size_features=ff_size_features, dropout=dropout, num_layers=num_layers, seq_len=seq_len, pe_scale_factor=pe_scale_factor)
     output = model(x)
     memory = model.Encoder(model.InputLayerEncoder(x))
     print("Input shape:", x.shape)

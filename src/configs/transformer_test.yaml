@@ -9,7 +9,8 @@ batch_size: 5
 # common model parameters
 feat_len: 8 # feature size
 comp_feat_len: 4 # must be divisible by num_heads
-ff_size: 256
+ff_size_features: 256
+ff_size_time: 2048
 num_layers: 4
 
 # model parameters transformer

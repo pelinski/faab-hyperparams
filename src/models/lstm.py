@@ -55,14 +55,14 @@ class LSTM(nn.Module):  # short version using matrices
             feat_out_size (int): Output sequence length
             feat_len (int): Input size of the network
             hidden_size (int): Size of the hidden state
-            ff_size (int): Size of the feed forward layer
+            ff_size_features (int): Size of the feed forward layer
             dropout (float): Dropout rate
         """
         super().__init__()
         self.seq_len = kwargs.get("seq_len", 10)
         self.feat_len = kwargs.get("feat_len", 8)
         self.feat_out_size = kwargs.get("feat_out_size", 8)
-        self.ff_size = kwargs.get("ff_size", 16)
+        self.ff_size_features = kwargs.get("ff_size_features", 16)
         self.hidden_size = kwargs.get("hidden_size", 4)
         self.num_layers = kwargs.get("num_layers", 1)
         self.dropout_p = kwargs.get("dropout", 0.2)
