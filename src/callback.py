@@ -3,7 +3,7 @@ import numpy as np
 import biquad
 import argparse
 from collections import deque  # circular buffers
-from scipy.interpolate import interp1d
+from scipy import interpolate
 from pybela import Streamer
 from pythonosc.udp_client import SimpleUDPClient
 from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, find_closest_model, get_models_range
@@ -150,17 +150,16 @@ async def callback(block, cs, streamer):
 
                 y = feature.detach().cpu()
 
+                if cs.seq_len != cs.model.comp_seq_len:
+                    original_indices = np.linspace(
+                        0, 1, num=cs.model.comp_seq_len) # x 
+                    new_indices = np.linspace(0, 1, num=cs.seq_len) # new_x
+                    coeffs = interpolate.splrep(original_indices, y)
+                    y = interpolate.splev(new_indices,coeffs)
+                
                 # dc filter
                 y = cs.out_hp[idx](y)
                 y = cs.out_lp[idx](y)
-
-                if cs.seq_len != cs.model.comp_seq_len:
-                    original_indices = np.linspace(
-                        0, 1, num=cs.model.comp_seq_len)
-                    new_indices = np.linspace(0, 1, num=cs.seq_len)
-                    cubic_interpolator = interp1d(
-                        original_indices, y, kind='cubic', axis=0)
-                    y = cubic_interpolator(new_indices)
 
                 # envelope # TODO
                 # filtered__out =
