@@ -21,3 +21,8 @@ dependencies = [
     "wandb==0.16.0",
     "webcolors==24.11.1",
 ]
+
+[dependency-groups]
+dev = [
+    "sounddevice>=0.5.1",
+]
