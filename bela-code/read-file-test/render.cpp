@@ -7,8 +7,7 @@
 std::vector<float> playbackBuffer;
 unsigned int playbackIndex = 0;
 
-unsigned int gAudioFramesPerAnalogFrame; // Number of audio frames per analog
-                                         // frame
+unsigned int gAudioFramesPerAnalogFrame; // Number of audio frames per analog frame
 float gInvSampleRate;                    // 1/sample rate
 float gInvAudioFramesPerAnalogFrame;     // 1/audio frames per analog frame
 
