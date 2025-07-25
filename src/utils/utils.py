@@ -1,6 +1,6 @@
 import argparse
 import yaml
-import torch 
+import torch
 import json
 import numpy as np
 import pandas as pd
@@ -15,7 +15,8 @@ from models import TransformerAutoencoder
 
 
 def get_device():
-    return torch.device("mps" if torch.backends.mps.is_available() else "cuda:0" if torch.cuda.is_available() else "cpu") # uncomment for mac m1!!! -- comment for clusters
+    # uncomment for mac m1!!! -- comment for clusters
+    return torch.device("mps" if torch.backends.mps.is_available() else "cuda:0" if torch.cuda.is_available() else "cpu")
     # return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
@@ -33,7 +34,8 @@ def load_hyperparams():
                         default="test", type=str)
     parser.add_argument("--pickle_path", help="dataset path",
                         default="src/dataset/processed_dataset_512.pkl", type=str)
-    parser.add_argument("--weights_path", help="weights path", default=None, type=str)
+    parser.add_argument(
+        "--weights_path", help="weights path", default=None, type=str)
     parser.add_argument("--seq_len", help="maximum sequence length",
                         default=512, type=int)
     parser.add_argument("--pred", help="prediction task",
@@ -63,7 +65,8 @@ def load_hyperparams():
         "--epochs", help="number of training epochs", default=500, type=int)
     parser.add_argument(
         "--optimizer", help="optimizer algorithm", default='rmsprop', type=str)
-    parser.add_argument("--criterion", help="loss criterion", default='mse', type=str)
+    parser.add_argument("--criterion", help="loss criterion",
+                        default='mse', type=str)
     parser.add_argument("--learning_rate",
                         help="learning rate", default=0.0001, type=float)
     parser.add_argument("--scheduler_step_size",
@@ -98,7 +101,7 @@ def load_hyperparams():
                    "dropout": hp["dropout"] if "dropout" in hp else args.dropout,
                    "epochs": hp["epochs"] if "epochs" in hp else args.epochs,
                    "optimizer": hp["optimizer"] if "optimizer" in hp else args.optimizer,
-                    "criterion": hp["criterion"] if "criterion" in hp else args.criterion,
+                   "criterion": hp["criterion"] if "criterion" in hp else args.criterion,
                    "learning_rate": hp["learning_rate"] if "learning_rate" in hp else args.learning_rate,
                    "scheduler_step_size": hp["scheduler_step_size"] if "scheduler_step_size" in hp else args.scheduler_step_size,
                    "scheduler_gamma": hp["scheduler_gamma"] if "scheduler_gamma" in hp else args.scheduler_gamma,
@@ -222,9 +225,10 @@ def get_models_range(path='src/models/trained'):
 
 def find_closest_model(output_coordinates, scaled_model_coordinates):
 
-    model_keys, scaled_model_coordinates = zip(*scaled_model_coordinates.items())
+    model_keys, scaled_model_coordinates = zip(
+        *scaled_model_coordinates.items())
     scaled_model_coordinates = np.array(scaled_model_coordinates)
-    
+
     # Calculate the Euclidean distances
     distances = np.linalg.norm(
         scaled_model_coordinates - output_coordinates, axis=1)
@@ -287,7 +291,8 @@ class weighted_MSELoss(torch.nn.Module):
     def __init__(self, weights):
         super().__init__()
         self.weights = weights
-    def forward(self,inputs,targets):
+
+    def forward(self, inputs, targets):
         """Computes the weighted mean squared error loss.
 
         Args:
@@ -298,6 +303,69 @@ class weighted_MSELoss(torch.nn.Module):
         Returns:
             torch.Tensor: Weighted mean squared error loss
         """
-        loss =  ((inputs - targets)**2 )*self.weights
+        loss = ((inputs - targets)**2)*self.weights
         return torch.sqrt(loss.mean())
-    
+
+
+def normalise(out, cs):
+    # -- normalisation --
+    # running normalisation (taking max and min from the current run)
+    if cs.running_norm:
+        cs.models_running_range[cs.model.id]["min"] = torch.stack(
+            (cs.models_running_range[cs.model.id]["min"], out.min(dim=1).values), dim=0).min(dim=0).values
+        cs.models_running_range[cs.model.id]["max"] = torch.stack(
+            (cs.models_running_range[cs.model.id]["max"], out.max(dim=1).values), dim=0).max(dim=0).values
+
+        _min, _max = cs.models_running_range[cs.model.id]["min"], cs.models_running_range[cs.model.id]["max"]
+
+    # absolute normalisation (taking max and min from passing the full dataset)
+    else:
+        _model_range = cs.full_dataset_models_range[cs.model.id]
+        _min, _max = torch.FloatTensor(_model_range["min"]).to(
+            cs.device), torch.FloatTensor(_model_range["max"]).to(cs.device)
+
+    # -- normalise before sending to Bela!! --
+    normalised_out = (out - _min.unsqueeze(1)) / \
+        (_max - _min).unsqueeze(1)
+
+    return normalised_out
+
+
+def change_model(normalised_out, cs):
+    # high sound amplitude and model has low variance --> change model
+    # streamer.send_buffer(
+    #     trigger_idx, 'f', seq_len, trigger_width*[1.0] + (seq_len-trigger_width)*[0.0])  # change trigger
+
+    out_coordinates = normalised_out[:, -1].detach().cpu().tolist()
+    out_coordinates = [c * g for c,
+                       g in zip(out_coordinates, cs.gain)]
+
+    # find the closest model to the out_ coordinates
+    closest_model, _ = find_closest_model(
+        out_coordinates, cs.models_coordinates)
+    cs.model = cs.models[closest_model]
+    if cs.permute_out:
+        cs.model_perm = torch.randperm(4)
+
+    # reset counter and thresholds
+    cs.iterations_in_this_model_counter = 0
+    cs.ratio_rising_threshold, cs.ratio_falling_threshold = cs.init_ratio_rising_threshold, cs.init_ratio_falling_threshold
+
+    print(cs.model.id, np.round(out_coordinates, 4))
+
+
+def calc_ratio_amplitude_variance(normalised_out, bridge_piezo_block, cs):
+    # -- amplitude --
+    _bridge_piezo = cs.bridge_filter(bridge_piezo_block)
+    cs.bridge_piezo_avg.append(np.average(_bridge_piezo))
+    weighted_avg_bridge_piezo = np.average(
+        cs.bridge_piezo_avg, weights=range(1, len(cs.bridge_piezo_avg)+1))
+
+    # -- model variance --
+    cs.model_out_std.append(normalised_out.std(dim=1).mean().item())
+    weighted_model_out_std = np.average(
+        cs.model_out_std, weights=range(1, len(cs.model_out_std)+1))
+
+    ratio = weighted_model_out_std / weighted_avg_bridge_piezo
+
+    return ratio

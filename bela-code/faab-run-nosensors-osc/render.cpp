@@ -1,3 +1,5 @@
+// rsync -avL bela-code/faab-run-nosensors-osc root@bela.local:Bela/projects/
+
 #include <Bela.h>
 #include <Watcher.h>
 #include <vector>
@@ -9,8 +11,6 @@ unsigned int gAudioFramesPerAnalogFrame;
 float gInvSampleRate;
 float gInvAudioFramesPerAnalogFrame;
 
-float gCurrentSample = 0;
-float gLastSample = 0;
 
 size_t gBufferSize = 1024;
 size_t gSensorPlaybackSize = 0;
@@ -60,9 +60,11 @@ void render(BelaContext* context, void* userData) {
 
         if (gAudioFramesPerAnalogFrame && !(n % gAudioFramesPerAnalogFrame)) {
             // Read sensor values and put them in the watcher
+            // float out = 0;
             for (unsigned int i = 0; i < NUM_SENSORS; i++) {
                 // Assign a single float value to the Watcher
                 *gFaabWatchers[i] = gSensorPlayback[i][gPlaybackIndex];
+                // out += gSensorPlayback[i][gPlaybackIndex];
             }
 
             // Loop playback index to the beginning if we exceed the data length

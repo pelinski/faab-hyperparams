@@ -5,7 +5,7 @@ import argparse
 from collections import deque  # circular buffers
 from pybela import Streamer
 from pythonosc.udp_client import SimpleUDPClient
-from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, find_closest_model, get_models_range
+from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, get_models_range, normalise, calc_ratio_amplitude_variance, change_model
 
 # TODO add dc filtering to latent space?
 # TODO add envelopes to avoid clipping?
@@ -18,23 +18,18 @@ class CallbackState:
         self.seq_len = seq_len
         self.num_models = num_models
         self.out_size = out_size
-        self.num_blocks_to_compute_avg = num_blocks_to_compute_avg
-        self.num_blocks_to_compute_std = num_blocks_to_compute_std
-        self.out_hp_filter_freq = out_hp_filter_freq
-        self.out_lp_filter_freq = out_lp_filter_freq
+        self.num_blocks_to_compute_avg, self.num_blocks_to_compute_std = num_blocks_to_compute_avg, num_blocks_to_compute_std
+        self.out_hp_filter_freq, self.out_lp_filter_freq = out_hp_filter_freq, out_lp_filter_freq
         self.envelope_len = envelope_len  # for envelopes when changing model
         self.num_of_iterations_in_this_model_check = num_of_iterations_in_this_model_check
-        self.init_ratio_rising_threshold = init_ratio_rising_threshold
-        self.init_ratio_falling_threshold = init_ratio_falling_threshold
-        self.threshold_leak = threshold_leak
-        self.trigger_width = trigger_width
+        self.init_ratio_rising_threshold, self.init_ratio_falling_threshold = init_ratio_rising_threshold, init_ratio_falling_threshold
+        self.threshold_leak, self.trigger_width = threshold_leak, trigger_width
         self.trigger_idx = trigger_idx
         self.running_norm = running_norm
         self.permute_out = permute_out
         self.device = get_device()
         self.path = path
-        self.osc_ip, self.osc_port = osc_ip, osc_port
-        self.osc_client = None
+        self.osc_ip, self.osc_port, self.osc_client = osc_ip, osc_port, None
 
         # init osc server
         if self.osc_ip and self.osc_port:
@@ -75,8 +70,7 @@ class CallbackState:
         self.model = self.models[starter_id]
         self.gain = 4 * [1.0]
         self.change_model = 0
-        self.ratio_rising_threshold = init_ratio_rising_threshold
-        self.ratio_falling_threshold = init_ratio_falling_threshold
+        self.ratio_rising_threshold, self.ratio_falling_threshold = init_ratio_rising_threshold, init_ratio_falling_threshold
         self.iterations_in_this_model_counter = 0
         self.bridge_piezo_avg = deque(maxlen=num_blocks_to_compute_avg)
         self.model_out_std = deque(maxlen=num_blocks_to_compute_std)
@@ -89,44 +83,28 @@ class CallbackState:
 async def callback(block, cs, streamer):
 
     with torch.no_grad():
+
+        buffers = np.array([buffer["buffer"]["data"] for buffer in block])
         _raw_data_tensor = torch.stack([torch.as_tensor(
-            buffer["buffer"]["data"], dtype=torch.float32) for buffer in block])  # num_features, 1024
+            buffer, dtype=torch.float32) for buffer in buffers])  # num_features, 1024
         # # split the data into seq_len to feed it into the model
         inputs = _raw_data_tensor.unfold(1, cs.seq_len, cs.seq_len).permute(
             1, 2, 0)  # n, seq_len, num_features
-
         # for each sequence of seq_len, feed it into the model
+
         for _input in inputs:
             cs.iterations_in_this_model_counter += 1
             out = cs.model.forward_encoder(_input.to(cs.device)).permute(
                 1, 0)  # num_outputs, seq_len
             # outputs --> [ff_size, num_heads, num_layers, learning_rate]
 
-            # -- normalisation --
-            # running normalisation (taking max and min from the current run)
-            if cs.running_norm:
-                cs.models_running_range[cs.model.id]["min"] = torch.stack(
-                    (cs.models_running_range[cs.model.id]["min"], out.min(dim=1).values), dim=0).min(dim=0).values
-                cs.models_running_range[cs.model.id]["max"] = torch.stack(
-                    (cs.models_running_range[cs.model.id]["max"], out.max(dim=1).values), dim=0).max(dim=0).values
-
-                _min, _max = cs.models_running_range[cs.model.id]["min"], cs.models_running_range[cs.model.id]["max"]
-
-            # absolute normalisation (taking max and min from passing the full dataset)
-            else:
-                _model_range = cs.full_dataset_models_range[cs.model.id]
-                _min, _max = torch.FloatTensor(_model_range["min"]).to(
-                    cs.device), torch.FloatTensor(_model_range["max"]).to(cs.device)
-
-            # -- normalise before sending to Bela!! --
-            normalised_out = (out - _min.unsqueeze(1)) / \
-                (_max - _min).unsqueeze(1)
+            normalised_out = normalise(out, cs)
 
             # permute output
             if cs.permute_out:
                 normalised_out = normalised_out[cs.model_perm]
 
-            # send each feature to Bela
+            # send each feature to Bela or OSC
             for idx, feature in enumerate(normalised_out):
                 # dc filter
                 filtered_out = cs.out_hp[idx](feature.cpu())
@@ -140,16 +118,9 @@ async def callback(block, cs, streamer):
                 else:
                     streamer.send_buffer(idx, 'f', cs.seq_len, filtered_out)
 
-            # -- amplitude --
-            _bridge_piezo = cs.bridge_filter(block[5]["buffer"]["data"])
-            cs.bridge_piezo_avg.append(np.average(_bridge_piezo))
-            weighted_avg_bridge_piezo = np.average(
-                cs.bridge_piezo_avg, weights=range(1, len(cs.bridge_piezo_avg)+1))
-
-            # -- model variance --
-            cs.model_out_std.append(normalised_out.std(dim=1).mean().item())
-            weighted_model_out_std = np.average(
-                cs.model_out_std, weights=range(1, len(cs.model_out_std)+1))
+            bridge_piezo_block = block[5]["buffer"]["data"]
+            ratio = calc_ratio_amplitude_variance(
+                normalised_out, bridge_piezo_block, cs)
 
             # -- model change --
             past_change_model = cs.change_model
@@ -160,7 +131,6 @@ async def callback(block, cs, streamer):
                 cs.ratio_falling_threshold += cs.threshold_leak
 
             # is it time to change model?
-            ratio = weighted_model_out_std / weighted_avg_bridge_piezo
             if (ratio > cs.ratio_rising_threshold and past_change_model == 0):
                 cs.change_model = 1
             elif (ratio < cs.ratio_falling_threshold and past_change_model == 1):
@@ -172,31 +142,8 @@ async def callback(block, cs, streamer):
 
             # if it's time to change model...
             if (past_change_model == 0 and cs.change_model == 1):
-                # high sound amplitude and model has low variance --> change model
-                # streamer.send_buffer(
-                #     trigger_idx, 'f', seq_len, trigger_width*[1.0] + (seq_len-trigger_width)*[0.0])  # change trigger
+                change_model(normalised_out, cs)
 
-                out_coordinates = normalised_out[:, -1].detach().cpu().tolist()
-                out_coordinates = [c * g for c,
-                                   g in zip(out_coordinates, cs.gain)]
-
-                # find the closest model to the out_ coordinates
-                closest_model, _ = find_closest_model(
-                    out_coordinates, cs.models_coordinates)
-                cs.model = cs.models[closest_model]
-                if cs.permute_out:
-                    cs.model_perm = torch.randperm(4)
-
-                # reset counter and thresholds
-                cs.iterations_in_this_model_counter = 0
-                cs.ratio_rising_threshold, cs.ratio_falling_threshold = cs.init_ratio_rising_threshold, cs.init_ratio_falling_threshold
-
-                print(cs.model.id, np.round(out_coordinates, 4))
-
-            else:
-                pass
-                # streamer.send_buffer(
-                #     trigger_idx, 'f', seq_len, seq_len*[0.0])  # change trigger
 
 if __name__ == "__main__":
 
