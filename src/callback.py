@@ -1,4 +1,5 @@
 import torch
+import time
 import numpy as np
 import biquad
 import argparse
@@ -6,13 +7,11 @@ from collections import deque  # circular buffers
 from pybela import Streamer
 from pythonosc.udp_client import SimpleUDPClient
 from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, get_models_range, normalise, calc_ratio_amplitude_variance, change_model
-
-# TODO add dc filtering to latent space?
-# TODO add envelopes to avoid clipping?
+from utils.bokeh import AudioDataPlotter
 
 
 class CallbackState:
-    def __init__(self, seq_len, num_models, out_size, num_blocks_to_compute_avg, num_blocks_to_compute_std, out_hp_filter_freq, out_lp_filter_freq, envelope_len, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None):
+    def __init__(self, seq_len, num_models, out_size, num_blocks_to_compute_avg, num_blocks_to_compute_std, out_hp_filter_freq, out_lp_filter_freq, envelope_len, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None, plotter=None):
 
         # -- params --
         self.seq_len = seq_len
@@ -30,6 +29,7 @@ class CallbackState:
         self.device = get_device()
         self.path = path
         self.osc_ip, self.osc_port, self.osc_client = osc_ip, osc_port, None
+        self.plotter = plotter
 
         # init osc server
         if self.osc_ip and self.osc_port:
@@ -83,10 +83,12 @@ class CallbackState:
 async def callback(block, cs, streamer):
 
     with torch.no_grad():
+        ref_timestamp = block[0]["buffer"]["ref_timestamp"]
+        plotter_data = {"ref_timestamp": ref_timestamp, **{var["name"]: var["buffer"]["data"]
+                                                           for var in block}, **{f"normalised_out_{i}": [] for i in range(cs.out_size)}}
 
-        buffers = np.array([buffer["buffer"]["data"] for buffer in block])
         _raw_data_tensor = torch.stack([torch.as_tensor(
-            buffer, dtype=torch.float32) for buffer in buffers])  # num_features, 1024
+            buffer["buffer"]["data"], dtype=torch.float32) for buffer in block])  # num_features, 1024
         # # split the data into seq_len to feed it into the model
         inputs = _raw_data_tensor.unfold(1, cs.seq_len, cs.seq_len).permute(
             1, 2, 0)  # n, seq_len, num_features
@@ -99,6 +101,12 @@ async def callback(block, cs, streamer):
             # outputs --> [ff_size, num_heads, num_layers, learning_rate]
 
             normalised_out = normalise(out, cs)
+            for i in range(cs.out_size):
+                plotter_data[f"normalised_out_{i}"] = normalised_out[i].tolist(
+                )
+
+            if cs.plotter is not None:
+                cs.plotter.update_data(plotter_data, data_len=cs.seq_len)
 
             # permute output
             if cs.permute_out:
@@ -147,9 +155,18 @@ async def callback(block, cs, streamer):
 
 if __name__ == "__main__":
 
+    vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',
+            'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
+
+    out_vars = ['normalised_out_0', 'normalised_out_1',
+                'normalised_out_2', 'normalised_out_3']
+
     parser = argparse.ArgumentParser(description="faab-callback")
     parser.add_argument('--osc', action='store_true', help='Use OSC server')
+    parser.add_argument('--plot', action='store_true',
+                        help='Enable Bokeh plotting')
     args = parser.parse_args()
+
     if args.osc:
         osc_ip, osc_port = "127.0.0.1", 2222
     else:
@@ -157,8 +174,18 @@ if __name__ == "__main__":
 
     streamer = Streamer()
     streamer.connect()
-    vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',
-            'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
+
+    plotter = None
+    if args.plot:
+        plotter = AudioDataPlotter(
+            y_vars=[*vars, *out_vars],
+            y_range=(0, 1.0),
+            rollover=500,
+            plot_update_delay=10,
+            sample_rate=streamer.sample_rate,
+        )
+        plotter.start_server()
+        time.sleep(1)  # wait for the server to start
 
     cs = CallbackState(
         seq_len=1024,
@@ -179,7 +206,8 @@ if __name__ == "__main__":
         permute_out=False,
         path="src/models/trained/transformer-autoencoder-jan",
         osc_ip=osc_ip,
-        osc_port=osc_port
+        osc_port=osc_port,
+        plotter=plotter
     )
 
     streamer.start_streaming(
