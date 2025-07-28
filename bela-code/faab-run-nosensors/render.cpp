@@ -11,8 +11,6 @@ unsigned int gAudioFramesPerAnalogFrame;
 float gInvSampleRate;
 float gInvAudioFramesPerAnalogFrame;
 
-float gain = 1.7f;
-
 std::vector<Watcher<float>*> gFaabWatchers;
 std::vector<BinaryStreamer*> gStreamers;
 const int gBasePriorityAuxTask = 90;
@@ -31,7 +29,7 @@ bool setup(BelaContext* context, void* userData) {
         gStreamers.push_back(new BinaryStreamer(gPlaybackBufferSize, priority));
         gStreamers[i]->setUnderrunCallback([i]() { rt_printf("Warning: File %zu buffer underrun!\n", i); });
 
-        std::string filename = "data/gFaabSensor_" + std::to_string(i + 1) + ".bin";
+        std::string filename = "data/january-2025/gFaabSensor_" + std::to_string(i + 1) + ".bin";
         if (!gStreamers[i]->loadFile(filename.c_str())) {
             printf("Failed to load file %zu: %s\n", i, filename.c_str());
             return false;
@@ -59,8 +57,10 @@ void render(BelaContext* context, void* userData) {
                 }
             }
 
-            audioWrite(context, n, 0, gain * out);
-            audioWrite(context, n, 1, gain * out);
+            out = out / NUM_SENSORS; // average the output from all sensors
+
+            audioWrite(context, n, 0, out);
+            audioWrite(context, n, 1, out);
         }
     }
 }
