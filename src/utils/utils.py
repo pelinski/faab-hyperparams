@@ -331,12 +331,12 @@ def normalise(out, cs):
     return normalised_out
 
 
-def change_model(normalised_out, cs):
+def change_model(out, cs):
     # high sound amplitude and model has low variance --> change model
     # streamer.send_buffer(
     #     trigger_idx, 'f', seq_len, trigger_width*[1.0] + (seq_len-trigger_width)*[0.0])  # change trigger
 
-    out_coordinates = normalised_out[:, -1].detach().cpu().tolist()
+    out_coordinates = out[:, -1].tolist()
     out_coordinates = [c * g for c,
                        g in zip(out_coordinates, cs.gain)]
 
@@ -354,15 +354,14 @@ def change_model(normalised_out, cs):
     print(cs.model.id, np.round(out_coordinates, 4))
 
 
-def calc_ratio_amplitude_variance(normalised_out, bridge_piezo_block, cs):
+def calc_ratio_amplitude_variance(out, bridge_piezo, cs):
     # -- amplitude --
-    _bridge_piezo = cs.bridge_filter(bridge_piezo_block)
-    cs.bridge_piezo_avg.append(np.average(_bridge_piezo))
+    cs.bridge_piezo_avg.append(np.average(bridge_piezo))
     weighted_avg_bridge_piezo = np.average(
         cs.bridge_piezo_avg, weights=range(1, len(cs.bridge_piezo_avg)+1))
 
     # -- model variance --
-    cs.model_out_std.append(normalised_out.std(dim=1).mean().item())
+    cs.model_out_std.append(out.std(axis=1).mean())
     weighted_model_out_std = np.average(
         cs.model_out_std, weights=range(1, len(cs.model_out_std)+1))
 
