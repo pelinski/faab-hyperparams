@@ -10,10 +10,12 @@ from pythonosc.udp_client import SimpleUDPClient
 from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, get_models_range, normalise, calc_ratio_amplitude_variance, change_model, dc_block
 from utils.bokeh import AudioDataPlotter
 from scipy import signal
+import time
+import psutil
 
 
 class CallbackState:
-    def __init__(self, seq_len, num_models, in_size, out_size, sample_rate, num_blocks_to_compute_avg, num_blocks_to_compute_std, out_hp_filter_freq, out_lp_filter_freq, envelope_len, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None, plotter=None, out2Bela=False, play_audio=False):
+    def __init__(self, seq_len, num_models, in_size, out_size, sample_rate, num_blocks_to_compute_avg, num_blocks_to_compute_std, hp_filter_freq, lp_filter_freq, envelope_len, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None, plotter=None, out2Bela=False, play_audio=False):
 
         # -- params --
         self.seq_len = seq_len
@@ -22,7 +24,7 @@ class CallbackState:
         self.out_size = out_size
         self.sample_rate = sample_rate
         self.num_blocks_to_compute_avg, self.num_blocks_to_compute_std = num_blocks_to_compute_avg, num_blocks_to_compute_std
-        self.out_hp_filter_freq, self.out_lp_filter_freq = out_hp_filter_freq, out_lp_filter_freq
+        self.hp_filter_freq, self.lp_filter_freq = hp_filter_freq, lp_filter_freq
         self.envelope_len = envelope_len  # for envelopes when changing model
         self.num_of_iterations_in_this_model_check = num_of_iterations_in_this_model_check
         self.init_ratio_rising_threshold, self.init_ratio_falling_threshold = init_ratio_rising_threshold, init_ratio_falling_threshold
@@ -53,6 +55,18 @@ class CallbackState:
             self.models_running_range[_id] = {"min": torch.FloatTensor([0, 0, 0, 0]).to(
                 self.device), "max": torch.FloatTensor([0, 0, 0, 0]).to(self.device)}
 
+        print("Warming up models...")
+        for _id in sorted_models:
+            # Create dummy input with same shape as real data
+            dummy_input = torch.randn(
+                self.seq_len, self.in_size).to(self.device)
+
+            # Run forward pass to initialize GPU kernels
+            with torch.no_grad():
+                _ = self.models[_id].forward_encoder(dummy_input)
+
+        print("Model warmup complete")
+
         # model space
         # min and max of model outputs (after passing the full dataset)
         self.full_dataset_models_range = get_models_range(path=path)
@@ -63,21 +77,13 @@ class CallbackState:
 
         self.bridge_dc_blocker = {'prev_in': 0, 'prev_out': 0}
 
-        # same input filtering as in the dataset
-        self.in_hp = [signal.butter(
-            2, 2, 'high', fs=sample_rate, output='sos') for _ in range(in_size)]
-        self.in_hp_zi = [signal.sosfilt_zi(hp) for hp in self.in_hp]
-        self.in_lp = [signal.butter(
-            2, 5000, 'low', fs=sample_rate, output='sos') for _ in range(in_size)]
-        self.in_lp_zi = [signal.sosfilt_zi(lp) for lp in self.in_lp]
-
         # self.out_dc_blocker = {'prev_in': 0, 'prev_out': 0}
-        self.out_hp = [signal.butter(
-            2, out_hp_filter_freq, 'high', fs=sample_rate, output='sos') for _ in range(out_size)]
-        self.out_hp_zi = [signal.sosfilt_zi(hp) for hp in self.out_hp]
-        self.out_lp = [signal.butter(
-            2, out_lp_filter_freq, 'low', fs=sample_rate, output='sos') for _ in range(out_size)]
-        self.out_lp_zi = [signal.sosfilt_zi(lp) for lp in self.out_lp]
+        self.in_bp = [signal.butter(
+            2, [hp_filter_freq, lp_filter_freq], 'bandpass', fs=sample_rate, output='sos') for _ in range(in_size)]
+        self.in_bp_zi = [signal.sosfilt_zi(bp) for bp in self.in_bp]
+        self.out_bp = [signal.butter(
+            2, [hp_filter_freq, lp_filter_freq], 'bandpass', fs=sample_rate, output='sos') for _ in range(out_size)]
+        self.out_bp_zi = [signal.sosfilt_zi(bp) for bp in self.out_bp]
 
         # envelope
         self.envelope_len = envelope_len
@@ -96,22 +102,32 @@ class CallbackState:
         # audio output
         if self.play_audio:
             def _audio_player(self):
-                print("audio_player")
+                # Pre-fill queue with silence to prevent initial underrun
+                # Stereo silence
+                silence = np.zeros(1024, dtype=np.float32).tobytes()
+                for _ in range(10):  # Add 10 blocks of silence
+                    try:
+                        self.audio_queue.put_nowait(silence)
+                    except queue.Full:
+                        break
                 while True:
                     try:
                         audio_data = self.audio_queue.get(timeout=1)
                         self.audio_stream.write(audio_data)
+                        queue_size = self.audio_queue.qsize()
+                        if queue_size == 0:
+                            print("Audio buffer underrun - may cause clicks")
                     except queue.Empty:
                         print("Audio queue is empty, waiting for data...")
                         continue
 
-            self.audio_queue = queue.Queue(maxsize=18)
+            self.audio_queue = queue.Queue(maxsize=10)
             self.audio_thread = threading.Thread(
                 target=_audio_player, daemon=True, args=(self,))
             self.audio = pyaudio.PyAudio()
             self.audio_stream = self.audio.open(
                 format=pyaudio.paFloat32,
-                channels=2,
+                channels=1,
                 rate=int(sample_rate),
                 output=True,
                 frames_per_buffer=1024)
@@ -122,7 +138,7 @@ class CallbackState:
 
 
 async def callback(block, cs, streamer):
-
+    start = time.perf_counter()
     with torch.no_grad():
         ref_timestamp = block[0]["buffer"]["ref_timestamp"]
 
@@ -130,11 +146,11 @@ async def callback(block, cs, streamer):
         filtered_in = {var["name"]: [] for var in block}
         for idx, var in enumerate(block):
             # low-pass filter
-            filtered_in[var["name"]], cs.in_lp_zi[idx] = signal.sosfilt(
-                cs.in_lp[idx], var["buffer"]["data"], zi=cs.in_lp_zi[idx])
-            # high-pass filter
-            filtered_in[var["name"]], cs.in_hp_zi[idx] = signal.sosfilt(
-                cs.in_hp[idx], var["buffer"]["data"], zi=cs.in_hp_zi[idx])
+            filtered_in[var["name"]], cs.in_bp_zi[idx] = signal.sosfilt(
+                cs.in_bp[idx], var["buffer"]["data"], zi=cs.in_bp_zi[idx])
+            # # high-pass filter
+            # filtered_in[var["name"]], cs.in_hp_zi[idx] = signal.sosfilt(
+            #     cs.in_hp[idx], var["buffer"]["data"], zi=cs.in_hp_zi[idx])
 
         # no normalisation because it removes the relative differences between sensors
 
@@ -147,18 +163,36 @@ async def callback(block, cs, streamer):
             1, 0)  # num_outputs, seq_len
         # outputs --> [ff_size, num_heads, num_layers, learning_rate]
 
-        # filtered_out = normalise(out, cs)
+        if cs.audio_stream:  # could spatialise
+            raw_input_sum = np.array([var["buffer"]["data"]
+                                      for var in block]).sum(axis=0).astype(np.float32) / cs.in_size  # sum buffers
+
+            # left_ch = filtered_out.sum(
+            #     axis=0).astype(np.float32)/cs.out_size  # sum buffers
+            # right_ch = data_tensor.sum(axis=0).numpy().astype(
+            #     np.float32)  # sum buffers
+            # stereo_data = np.column_stack(
+            #     [left_ch, right_ch]).flatten().astype(np.float32)
+            try:
+                cs.audio_queue.put_nowait(raw_input_sum.tobytes())
+            except queue.Full:
+                # Remove oldest, add newest - keep audio flowing
+                try:
+                    cs.audio_queue.get_nowait()
+                    cs.audio_queue.put_nowait(raw_input_sum.tobytes())
+                except queue.Empty:
+                    pass
 
         # filtered out
         filtered_out = [[] for _ in range(cs.out_size)]
         for idx in range(cs.out_size):
             _out = out[idx].cpu().numpy().tolist()  # convert to list
             # low-pass filter
-            filtered_out[idx], cs.out_lp_zi[idx] = signal.sosfilt(
-                cs.out_lp[idx], _out, zi=cs.out_lp_zi[idx])
-            # high-pass filter
-            filtered_out[idx], cs.out_hp_zi[idx] = signal.sosfilt(
-                cs.out_hp[idx], _out, zi=cs.out_hp_zi[idx])
+            filtered_out[idx], cs.out_bp_zi[idx] = signal.sosfilt(
+                cs.out_bp[idx], _out, zi=cs.out_bp_zi[idx])
+            # # high-pass filter
+            # filtered_out[idx], cs.out_hp_zi[idx] = signal.sosfilt(
+            #     cs.out_hp[idx], _out, zi=cs.out_hp_zi[idx])
 
         if cs.plotter is not None:
             plotter_data = {"ref_timestamp": ref_timestamp,
@@ -167,15 +201,6 @@ async def callback(block, cs, streamer):
             cs.plotter.update_data(plotter_data, data_len=cs.seq_len)
 
         filtered_out = np.array(filtered_out)  # makes model change easier
-
-        if cs.audio_stream:
-            audio_data = filtered_out.sum(
-                axis=0).astype(np.float32)  # sum buffers
-
-            try:
-                cs.audio_queue.put_nowait(audio_data.tobytes())
-            except queue.Full:
-                pass
 
         # permute output
         if cs.permute_out:
@@ -214,9 +239,30 @@ async def callback(block, cs, streamer):
         if (cs.debug_counter % 20 == 0):
             print(ratio)
 
-        # if it's time to change model...
-        if (past_change_model == 0 and cs.change_model == 1):
-            change_model(filtered_out, cs)
+        # # if it's time to change model...
+        # if (past_change_model == 0 and cs.change_model == 1):
+        #     change_model(filtered_out, cs)
+
+        # diagnostics
+
+        # In callback, every 50 iterations:
+        if cs.debug_counter % 50 == 0:
+            elapsed = time.perf_counter() - start
+
+            target = 1024 / (cs.sample_rate)  # Your block period
+            utilization = (elapsed / target) * 100
+            print(f"Callback: {elapsed*1000:.1f}ms ({utilization:.1f}% CPU)")
+            # Check system memory
+            ram_percent = psutil.virtual_memory().percent
+
+            # Check GPU memory if using CUDA
+            if torch.cuda.is_available():
+                gpu_memory = torch.cuda.memory_allocated() / 1024**2  # MB
+                print(
+                    f"RAM: {ram_percent}%, GPU: {gpu_memory:.1f}MB, Queue: {cs.audio_queue.qsize()}")
+
+            # Check audio queue size
+            print(f"Audio queue size: {cs.audio_queue.qsize()}")
 
 
 if __name__ == "__main__":
@@ -264,8 +310,8 @@ if __name__ == "__main__":
         sample_rate=sample_rate,
         num_blocks_to_compute_avg=10,
         num_blocks_to_compute_std=40,
-        out_hp_filter_freq=10,
-        out_lp_filter_freq=5000,
+        hp_filter_freq=1,
+        lp_filter_freq=5000,
         envelope_len=256,
         num_of_iterations_in_this_model_check=100,
         init_ratio_rising_threshold=2.5,
