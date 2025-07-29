@@ -368,3 +368,14 @@ def calc_ratio_amplitude_variance(out, bridge_piezo, cs):
     ratio = weighted_model_out_std / weighted_avg_bridge_piezo
 
     return ratio
+
+
+def dc_block(data, blocker, alpha=0.995):
+    """Simple DC blocking filter"""
+    result = []
+    for sample in data:
+        blocker['prev_out'] = alpha * \
+            (blocker['prev_out'] + sample - blocker['prev_in'])
+        blocker['prev_in'] = sample
+        result.append(blocker['prev_out'])
+    return result

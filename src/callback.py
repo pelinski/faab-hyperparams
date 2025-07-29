@@ -1,16 +1,19 @@
 import torch
 import numpy as np
 import argparse
-from collections import deque  # circular buffers
+import pyaudio
+from collections import deque
+import queue
+import threading
 from pybela import Streamer
 from pythonosc.udp_client import SimpleUDPClient
-from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, get_models_range, normalise, calc_ratio_amplitude_variance, change_model
+from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, get_models_range, normalise, calc_ratio_amplitude_variance, change_model, dc_block
 from utils.bokeh import AudioDataPlotter
 from scipy import signal
 
 
 class CallbackState:
-    def __init__(self, seq_len, num_models, in_size, out_size, sample_rate, num_blocks_to_compute_avg, num_blocks_to_compute_std, out_hp_filter_freq, out_lp_filter_freq, envelope_len, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None, plotter=None, out2Bela=False):
+    def __init__(self, seq_len, num_models, in_size, out_size, sample_rate, num_blocks_to_compute_avg, num_blocks_to_compute_std, out_hp_filter_freq, out_lp_filter_freq, envelope_len, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None, plotter=None, out2Bela=False, play_audio=False):
 
         # -- params --
         self.seq_len = seq_len
@@ -32,6 +35,7 @@ class CallbackState:
         self.osc_ip, self.osc_port, self.osc_client = osc_ip, osc_port, None
         self.plotter = plotter
         self.out2Bela = out2Bela
+        self.play_audio = play_audio
 
         # init osc server
         if self.osc_ip and self.osc_port:
@@ -89,19 +93,32 @@ class CallbackState:
         self.debug_counter = 0
         self.model_perm = [0, 1, 2, 3]
 
+        # audio output
+        if self.play_audio:
+            def _audio_player(self):
+                print("audio_player")
+                while True:
+                    try:
+                        audio_data = self.audio_queue.get(timeout=1)
+                        self.audio_stream.write(audio_data)
+                    except queue.Empty:
+                        print("Audio queue is empty, waiting for data...")
+                        continue
+
+            self.audio_queue = queue.Queue(maxsize=18)
+            self.audio_thread = threading.Thread(
+                target=_audio_player, daemon=True, args=(self,))
+            self.audio = pyaudio.PyAudio()
+            self.audio_stream = self.audio.open(
+                format=pyaudio.paFloat32,
+                channels=2,
+                rate=int(sample_rate),
+                output=True,
+                frames_per_buffer=1024)
+            self.audio_thread.start()
+
+
 # sound_threshold =0.021
-
-
-# filters #TODO move to data utils?
-def dc_block(data, blocker, alpha=0.995):
-    """Simple DC blocking filter"""
-    result = []
-    for sample in data:
-        blocker['prev_out'] = alpha * \
-            (blocker['prev_out'] + sample - blocker['prev_in'])
-        blocker['prev_in'] = sample
-        result.append(blocker['prev_out'])
-    return result
 
 
 async def callback(block, cs, streamer):
@@ -151,6 +168,15 @@ async def callback(block, cs, streamer):
 
         filtered_out = np.array(filtered_out)  # makes model change easier
 
+        if cs.audio_stream:
+            audio_data = filtered_out.sum(
+                axis=0).astype(np.float32)  # sum buffers
+
+            try:
+                cs.audio_queue.put_nowait(audio_data.tobytes())
+            except queue.Full:
+                pass
+
         # permute output
         if cs.permute_out:
             filtered_out = filtered_out[cs.model_perm]
@@ -160,7 +186,7 @@ async def callback(block, cs, streamer):
             if cs.osc_client:
                 cs.osc_client.send_message(
                     f'/f{idx+1}', filtered_out[f"out_{idx}"])
-            elif cs.out2Bela:
+            if cs.out2Bela:
                 streamer.send_buffer(idx, 'f', cs.seq_len,
                                      filtered_out[f"out_{idx}"])
 
@@ -194,17 +220,19 @@ async def callback(block, cs, streamer):
 
 
 if __name__ == "__main__":
-
     in_vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',
                'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
 
-    out_vars = ['out_0', 'out_1',
-                'out_2', 'out_3']
+    out_vars = ['out_0', 'out_1', 'out_2', 'out_3']
 
     parser = argparse.ArgumentParser(description="faab-callback")
     parser.add_argument('--osc', action='store_true', help='Use OSC server')
     parser.add_argument('--plot', action='store_true',
                         help='Enable Bokeh plotting')
+    parser.add_argument('--out2Bela', action='store_true',
+                        help='Send output to Bela')
+    parser.add_argument('--audio', action='store_true',
+                        help="Play model output as audio")
     args = parser.parse_args()
 
     if args.osc:
@@ -251,7 +279,8 @@ if __name__ == "__main__":
         osc_ip=osc_ip,
         osc_port=osc_port,
         plotter=plotter,
-        out2Bela=False
+        out2Bela=args.out2Bela,
+        play_audio=args.audio
     )
 
     streamer.start_streaming(
