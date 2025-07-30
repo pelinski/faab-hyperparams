@@ -7,11 +7,12 @@ import queue
 import threading
 from pybela import Streamer
 from pythonosc.udp_client import SimpleUDPClient
-from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, get_models_range, normalise, calc_ratio_amplitude_variance, change_model, dc_block
+from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, get_models_range, calc_ratio_amplitude_variance, change_model, dc_block
 from utils.bokeh import AudioDataPlotter
 from scipy import signal
 import time
 import psutil
+import sys
 
 
 class CallbackState:
@@ -38,6 +39,8 @@ class CallbackState:
         self.plotter = plotter
         self.out2Bela = out2Bela
         self.play_audio = play_audio
+
+        print(f"Using device: {self.device}, python version {sys.version}")
 
         # init osc server
         if self.osc_ip and self.osc_port:
@@ -142,17 +145,11 @@ async def callback(block, cs, streamer):
     with torch.no_grad():
         ref_timestamp = block[0]["buffer"]["ref_timestamp"]
 
-        # filter input data (as in january training dataset, inverted lp and hp order because hp was adding dc offset again)
+        # filter input data -- no normalisation because it removes the relative differences between sensors
         filtered_in = {var["name"]: [] for var in block}
         for idx, var in enumerate(block):
-            # low-pass filter
             filtered_in[var["name"]], cs.in_bp_zi[idx] = signal.sosfilt(
                 cs.in_bp[idx], var["buffer"]["data"], zi=cs.in_bp_zi[idx])
-            # # high-pass filter
-            # filtered_in[var["name"]], cs.in_hp_zi[idx] = signal.sosfilt(
-            #     cs.in_hp[idx], var["buffer"]["data"], zi=cs.in_hp_zi[idx])
-
-        # no normalisation because it removes the relative differences between sensors
 
         data_tensor = torch.stack([torch.as_tensor(
             filtered_in[var["name"]], dtype=torch.float32) for var in block])  # num_features, 1024
@@ -162,6 +159,13 @@ async def callback(block, cs, streamer):
         out = cs.model.forward_encoder(input.to(cs.device)).permute(
             1, 0)  # num_outputs, seq_len
         # outputs --> [ff_size, num_heads, num_layers, learning_rate]
+
+        # filtered out
+        filtered_out = [[] for _ in range(cs.out_size)]
+        for idx in range(cs.out_size):
+            _out = out[idx].cpu().numpy().tolist()  # convert to list
+            filtered_out[idx], cs.out_bp_zi[idx] = signal.sosfilt(
+                cs.out_bp[idx], _out, zi=cs.out_bp_zi[idx])
 
         if cs.audio_stream:  # could spatialise
             raw_input_sum = np.array([var["buffer"]["data"]
@@ -182,17 +186,6 @@ async def callback(block, cs, streamer):
                     cs.audio_queue.put_nowait(raw_input_sum.tobytes())
                 except queue.Empty:
                     pass
-
-        # filtered out
-        filtered_out = [[] for _ in range(cs.out_size)]
-        for idx in range(cs.out_size):
-            _out = out[idx].cpu().numpy().tolist()  # convert to list
-            # low-pass filter
-            filtered_out[idx], cs.out_bp_zi[idx] = signal.sosfilt(
-                cs.out_bp[idx], _out, zi=cs.out_bp_zi[idx])
-            # # high-pass filter
-            # filtered_out[idx], cs.out_hp_zi[idx] = signal.sosfilt(
-            #     cs.out_hp[idx], _out, zi=cs.out_hp_zi[idx])
 
         if cs.plotter is not None:
             plotter_data = {"ref_timestamp": ref_timestamp,
@@ -297,8 +290,9 @@ if __name__ == "__main__":
             y_vars=[*in_vars, *out_vars],
             y_range=(-1, 1),
             rollover=3*1024,
-            plot_update_delay=1024/(sample_rate),
+            plot_update_delay=1024*1000/sample_rate,
             sample_rate=sample_rate,
+            port=5007,
         )
         plotter.start_server()
 
