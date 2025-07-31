@@ -5,11 +5,12 @@ import pyaudio
 from collections import deque
 import queue
 import threading
+from scipy import signal
 from pybela import Streamer
 from pythonosc.udp_client import SimpleUDPClient
 from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, get_models_range, calc_ratio_amplitude_variance, change_model, dc_block
 from utils.bokeh import AudioDataPlotter
-from scipy import signal
+from utils.mssdiff import MultiScaleSpectralDiff
 
 # import time
 # import psutil
@@ -109,6 +110,14 @@ class CallbackState:
         self.debug_counter = 0
         self.model_perm = [0, 1, 2, 3]
         self.prev_model = self.models[starter_id]  # for crossfading
+        self.mssdiff_scales = [
+            {'window_size': 128, 'hop_length': 32},
+            {'window_size': 256, 'hop_length': 64},
+            {'window_size': 512, 'hop_length': 128},
+            {'window_size': 1024, 'hop_length': 256}
+        ]
+        self.mssdiff = MultiScaleSpectralDiff(
+            sample_rate=sample_rate, scales=self.mssdiff_scales)
 
         # audio output
         if self.play_audio:
@@ -192,11 +201,13 @@ async def callback(block, cs, streamer):
 
         filtered_out = np.array(filtered_out)
 
+        # multiscale spectral difference
+        in_audio = data_tensor.sum(axis=0).numpy().astype(np.float32)  # in
+        out_audio = 10 * filtered_out.sum(axis=0).astype(np.float32)  # out
+
+        mssdiff_results = cs.mssdiff.process_block(in_audio, out_audio)
+
         if cs.audio_stream:  # could spatialise
-            # in_audio = data_tensor.sum(axis=0).numpy().astype(
-            #     np.float32)  # in
-            out_audio = 10 * filtered_out.sum(
-                axis=0).astype(np.float32)  # out
             stereo_data = np.column_stack(
                 [out_audio, out_audio]).flatten().astype(np.float32)
             try:
@@ -207,10 +218,12 @@ async def callback(block, cs, streamer):
                 cs.audio_queue.put_nowait(stereo_data.tobytes())
 
         if cs.plotter is not None:
-            plotter_data = {"ref_timestamp": ref_timestamp,
-                            **{f"gFaabSensor_{i+1}": filtered_in[i] for i in range(cs.in_size)},
-                            **{f"out_{i+1}": filtered_out[i] for i in range(cs.out_size)}}
-            cs.plotter.update_data(plotter_data, data_len=cs.seq_len)
+            cs.plotter.update_spectrograms(mssdiff_results)
+            plotter_signals_data = {"ref_timestamp": ref_timestamp,
+                                    **{f"gFaabSensor_{i+1}": filtered_in[i] for i in range(cs.in_size)},
+                                    **{f"out_{i+1}": filtered_out[i] for i in range(cs.out_size)}}
+            cs.plotter.update_signal_data(
+                plotter_signals_data, data_len=cs.seq_len)
 
         # permute output
         if cs.permute_out:
@@ -278,6 +291,9 @@ if __name__ == "__main__":
 
     out_vars = ['out_1', 'out_2', 'out_3', 'out_4']
 
+    spec_vars = ["mssdiff_scale_0_128", "mssdiff_scale_1_256",
+                 "mssdiff_scale_2_512", "mssdiff_scale_3_1024"]
+
     parser = argparse.ArgumentParser(description="faab-callback")
     parser.add_argument('--osc', action='store_true', help='Use OSC server')
     parser.add_argument('--plot', action='store_true',
@@ -301,12 +317,14 @@ if __name__ == "__main__":
     plotter = None
     if args.plot:
         plotter = AudioDataPlotter(
-            y_vars=[*in_vars, *out_vars],
-            y_range=(-1, 1),
-            rollover=3*1024,
-            plot_update_delay=1024*1000/sample_rate,
+            signal_vars=[*in_vars, *out_vars],
+            spectrogram_vars=spec_vars,
+            rollover_blocks=3,
+            plot_update_delay=50,
             sample_rate=sample_rate,
             port=5007,
+            enable_spectrograms=True,
+            max_freq_spectrogram=2000,
         )
         plotter.start_server()
 
