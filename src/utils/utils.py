@@ -223,15 +223,21 @@ def get_models_range(path='src/models/trained'):
     return json.load(open(f'{path}/models_range.json'))
 
 
-def find_closest_model(output_coordinates, scaled_model_coordinates):
+def find_closest_model(output_coordinates, scaled_model_coordinates, exclude=None):
 
     model_keys, scaled_model_coordinates = zip(
         *scaled_model_coordinates.items())
+
     scaled_model_coordinates = np.array(scaled_model_coordinates)
 
     # Calculate the Euclidean distances
     distances = np.linalg.norm(
         scaled_model_coordinates - output_coordinates, axis=1)
+
+    if exclude is not None:
+        # Exclude the model if specified
+        exclude_index = model_keys.index(exclude)
+        distances[exclude_index] = np.inf
 
     # Find the index of the row with the smallest distance
     closest_row_index = np.argmin(distances)
@@ -335,14 +341,16 @@ def change_model(out, cs):
     # high sound amplitude and model has low variance --> change model
     # streamer.send_buffer(
     #     trigger_idx, 'f', seq_len, trigger_width*[1.0] + (seq_len-trigger_width)*[0.0])  # change trigger
+    cs.prev_model = cs.model
 
     out_coordinates = out[:, -1].tolist()
     out_coordinates = [c * g for c,
                        g in zip(out_coordinates, cs.gain)]
 
-    # find the closest model to the out_ coordinates
+    # find the closest model to the out_ coordinates, can't be the same as the current model
+
     closest_model, _ = find_closest_model(
-        out_coordinates, cs.models_coordinates)
+        out_coordinates, cs.models_coordinates, exclude=cs.model.id)
     cs.model = cs.models[closest_model]
     if cs.permute_out:
         cs.model_perm = torch.randperm(4)
@@ -356,7 +364,7 @@ def change_model(out, cs):
 
 def calc_ratio_amplitude_variance(out, bridge_piezo, cs):
     # -- amplitude --
-    cs.bridge_piezo_avg.append(np.average(bridge_piezo))
+    cs.bridge_piezo_avg.append(np.average(np.absolute(bridge_piezo)))
     weighted_avg_bridge_piezo = np.average(
         cs.bridge_piezo_avg, weights=range(1, len(cs.bridge_piezo_avg)+1))
 
@@ -366,6 +374,10 @@ def calc_ratio_amplitude_variance(out, bridge_piezo, cs):
         cs.model_out_std, weights=range(1, len(cs.model_out_std)+1))
 
     ratio = weighted_model_out_std / weighted_avg_bridge_piezo
+
+    if cs.debug_counter % 10 == 0:
+        print(
+            f" Ratio: {ratio:.2f}, Weighted model out std: {weighted_model_out_std:.4f}, Weighted bridge piezo avg: {weighted_avg_bridge_piezo:.4f}")
 
     return ratio
 

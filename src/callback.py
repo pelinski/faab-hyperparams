@@ -10,9 +10,9 @@ from pythonosc.udp_client import SimpleUDPClient
 from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, get_models_range, calc_ratio_amplitude_variance, change_model, dc_block
 from utils.bokeh import AudioDataPlotter
 from scipy import signal
-import time
-import psutil
-import sys
+
+# import time
+# import psutil
 
 
 class CallbackState:
@@ -40,7 +40,7 @@ class CallbackState:
         self.out2Bela = out2Bela
         self.play_audio = play_audio
 
-        print(f"Using device: {self.device}, python version {sys.version}")
+        print(f"Using device: {self.device}")
 
         # init osc server
         if self.osc_ip and self.osc_port:
@@ -81,12 +81,19 @@ class CallbackState:
         self.bridge_dc_blocker = {'prev_in': 0, 'prev_out': 0}
 
         # self.out_dc_blocker = {'prev_in': 0, 'prev_out': 0}
+
+        # -- filters --
+        # input bp filters
         self.in_bp = [signal.butter(
             2, [hp_filter_freq, lp_filter_freq], 'bandpass', fs=sample_rate, output='sos') for _ in range(in_size)]
         self.in_bp_zi = [signal.sosfilt_zi(bp) for bp in self.in_bp]
-        self.out_bp = [signal.butter(
-            2, [hp_filter_freq, lp_filter_freq], 'bandpass', fs=sample_rate, output='sos') for _ in range(out_size)]
-        self.out_bp_zi = [signal.sosfilt_zi(bp) for bp in self.out_bp]
+        # output bp filters (each model has its own set of filters)
+        self.out_bp, self.out_bp_zi = {}, {}
+        for _id in sorted_models:
+            self.out_bp[_id] = [signal.butter(
+                2, [hp_filter_freq, lp_filter_freq], 'bandpass', fs=sample_rate, output='sos') for _ in range(out_size)]
+            self.out_bp_zi[_id] = [signal.sosfilt_zi(
+                bp) for bp in self.out_bp[_id]]
 
         # envelope
         self.envelope_len = envelope_len
@@ -101,6 +108,7 @@ class CallbackState:
         self.model_out_std = deque(maxlen=num_blocks_to_compute_std)
         self.debug_counter = 0
         self.model_perm = [0, 1, 2, 3]
+        self.prev_model = self.models[starter_id]  # for crossfading
 
         # audio output
         if self.play_audio:
@@ -108,7 +116,7 @@ class CallbackState:
                 # Pre-fill queue with silence to prevent initial underrun
                 # Stereo silence
                 silence = np.zeros(1024, dtype=np.float32).tobytes()
-                for _ in range(10):  # Add 10 blocks of silence
+                for _ in range(2):  # Add 10 blocks of silence
                     try:
                         self.audio_queue.put_nowait(silence)
                     except queue.Full:
@@ -119,18 +127,19 @@ class CallbackState:
                         self.audio_stream.write(audio_data)
                         queue_size = self.audio_queue.qsize()
                         if queue_size == 0:
-                            print("Audio buffer underrun - may cause clicks")
+                            print("Audio buffer underrun")
                     except queue.Empty:
                         print("Audio queue is empty, waiting for data...")
                         continue
 
+            # latency!!! (increase if using bokeh plotter)
             self.audio_queue = queue.Queue(maxsize=10)
             self.audio_thread = threading.Thread(
                 target=_audio_player, daemon=True, args=(self,))
             self.audio = pyaudio.PyAudio()
             self.audio_stream = self.audio.open(
                 format=pyaudio.paFloat32,
-                channels=1,
+                channels=2,
                 rate=int(sample_rate),
                 output=True,
                 frames_per_buffer=1024)
@@ -141,59 +150,67 @@ class CallbackState:
 
 
 async def callback(block, cs, streamer):
-    start = time.perf_counter()
+    # start = time.perf_counter()
     with torch.no_grad():
         ref_timestamp = block[0]["buffer"]["ref_timestamp"]
 
         # filter input data -- no normalisation because it removes the relative differences between sensors
-        filtered_in = {var["name"]: [] for var in block}
+        filtered_in = [[] for _ in range(cs.in_size)]
         for idx, var in enumerate(block):
-            filtered_in[var["name"]], cs.in_bp_zi[idx] = signal.sosfilt(
-                cs.in_bp[idx], var["buffer"]["data"], zi=cs.in_bp_zi[idx])
+            _in = var["buffer"]["data"]
+            filtered_in[idx], cs.in_bp_zi[idx] = signal.sosfilt(
+                cs.in_bp[idx], _in, zi=cs.in_bp_zi[idx])
 
         data_tensor = torch.stack([torch.as_tensor(
-            filtered_in[var["name"]], dtype=torch.float32) for var in block])  # num_features, 1024
+            filtered_in[idx], dtype=torch.float32) for idx in range(cs.in_size)])  # num_features, 1024
         input = data_tensor.permute(1, 0)  # seq_len, num_features
 
-        cs.iterations_in_this_model_counter += 1
         out = cs.model.forward_encoder(input.to(cs.device)).permute(
             1, 0)  # num_outputs, seq_len
+
+        out_prev_model = None
+        if cs.iterations_in_this_model_counter == 0:
+            out_prev_model = cs.prev_model.forward_encoder(
+                input.to(cs.device)).permute(1, 0)
+
         # outputs --> [ff_size, num_heads, num_layers, learning_rate]
 
         # filtered out
         filtered_out = [[] for _ in range(cs.out_size)]
         for idx in range(cs.out_size):
             _out = out[idx].cpu().numpy().tolist()  # convert to list
-            filtered_out[idx], cs.out_bp_zi[idx] = signal.sosfilt(
-                cs.out_bp[idx], _out, zi=cs.out_bp_zi[idx])
+            filtered_out[idx], cs.out_bp_zi[cs.model.id][idx] = signal.sosfilt(
+                cs.out_bp[cs.model.id][idx], _out, zi=cs.out_bp_zi[cs.model.id][idx])
+            if out_prev_model is not None:
+                _out_prev = out_prev_model[idx].cpu().numpy().tolist()
+                _filtered_out_prev, cs.out_bp_zi[cs.prev_model.id][idx] = signal.sosfilt(
+                    cs.out_bp[cs.prev_model.id][idx], _out_prev, zi=cs.out_bp_zi[cs.prev_model.id][idx])
+                # 0 to 1 over 1024 samples
+                fade_steps = np.linspace(0, 1, cs.seq_len)
+                filtered_out[idx] = np.array(filtered_out[idx]) * fade_steps + \
+                    np.array(_filtered_out_prev) * (1 - fade_steps)
+
+        filtered_out = np.array(filtered_out)
 
         if cs.audio_stream:  # could spatialise
-            raw_input_sum = np.array([var["buffer"]["data"]
-                                      for var in block]).sum(axis=0).astype(np.float32) / cs.in_size  # sum buffers
-
-            # left_ch = filtered_out.sum(
-            #     axis=0).astype(np.float32)/cs.out_size  # sum buffers
-            # right_ch = data_tensor.sum(axis=0).numpy().astype(
-            #     np.float32)  # sum buffers
-            # stereo_data = np.column_stack(
-            #     [left_ch, right_ch]).flatten().astype(np.float32)
+            # in_audio = data_tensor.sum(axis=0).numpy().astype(
+            #     np.float32)  # in
+            out_audio = 10 * filtered_out.sum(
+                axis=0).astype(np.float32)  # out
+            stereo_data = np.column_stack(
+                [out_audio, out_audio]).flatten().astype(np.float32)
             try:
-                cs.audio_queue.put_nowait(raw_input_sum.tobytes())
+                cs.audio_queue.put_nowait(stereo_data.tobytes())
             except queue.Full:
-                # Remove oldest, add newest - keep audio flowing
-                try:
-                    cs.audio_queue.get_nowait()
-                    cs.audio_queue.put_nowait(raw_input_sum.tobytes())
-                except queue.Empty:
-                    pass
+                print("Audio queue is full, dropping audio data")
+                cs.audio_queue.get_nowait()
+                cs.audio_queue.put_nowait(stereo_data.tobytes())
 
         if cs.plotter is not None:
             plotter_data = {"ref_timestamp": ref_timestamp,
-                            **filtered_in,
-                            **{f"out_{i}": filtered_out[i] for i in range(cs.out_size)}}
+                            **{f"gFaabSensor_{i+1}": filtered_in[i] for i in range(cs.in_size)},
+                            **{f"out_{i+1}": filtered_out[i] for i in range(cs.out_size)}}
             cs.plotter.update_data(plotter_data, data_len=cs.seq_len)
-
-        filtered_out = np.array(filtered_out)  # makes model change easier
 
         # permute output
         if cs.permute_out:
@@ -222,6 +239,7 @@ async def callback(block, cs, streamer):
             cs.ratio_rising_threshold -= cs.threshold_leak
             cs.ratio_falling_threshold += cs.threshold_leak
 
+        cs.iterations_in_this_model_counter += 1
         # is it time to change model?
         if (ratio > cs.ratio_rising_threshold and past_change_model == 0):
             cs.change_model = 1
@@ -229,40 +247,36 @@ async def callback(block, cs, streamer):
             cs.change_model = 0
 
         cs.debug_counter += 1  # for debugging
-        if (cs.debug_counter % 20 == 0):
-            print(ratio)
 
-        # # if it's time to change model...
-        # if (past_change_model == 0 and cs.change_model == 1):
-        #     change_model(filtered_out, cs)
+        # if it's time to change model...
+        if (past_change_model == 0 and cs.change_model == 1):
+            change_model(filtered_out, cs)
 
-        # diagnostics
+        # #  debug audio callback diagnostics
+        # if cs.debug_counter % 50 == 0:
+        #     elapsed = time.perf_counter() - start
 
-        # In callback, every 50 iterations:
-        if cs.debug_counter % 50 == 0:
-            elapsed = time.perf_counter() - start
+        #     target = 1024 / (cs.sample_rate)  # Your block period
+        #     utilization = (elapsed / target) * 100
+        #     print(f"Callback: {elapsed*1000:.1f}ms ({utilization:.1f}% CPU)")
+        #     # Check system memory
+        #     ram_percent = psutil.virtual_memory().percent
 
-            target = 1024 / (cs.sample_rate)  # Your block period
-            utilization = (elapsed / target) * 100
-            print(f"Callback: {elapsed*1000:.1f}ms ({utilization:.1f}% CPU)")
-            # Check system memory
-            ram_percent = psutil.virtual_memory().percent
+        #     # Check GPU memory if using CUDA
+        #     if torch.cuda.is_available():
+        #         gpu_memory = torch.cuda.memory_allocated() / 1024**2  # MB
+        #         print(
+        #             f"RAM: {ram_percent}%, GPU: {gpu_memory:.1f}MB, Queue: {cs.audio_queue.qsize()}")
 
-            # Check GPU memory if using CUDA
-            if torch.cuda.is_available():
-                gpu_memory = torch.cuda.memory_allocated() / 1024**2  # MB
-                print(
-                    f"RAM: {ram_percent}%, GPU: {gpu_memory:.1f}MB, Queue: {cs.audio_queue.qsize()}")
-
-            # Check audio queue size
-            print(f"Audio queue size: {cs.audio_queue.qsize()}")
+        #     # Check audio queue size
+        #     print(f"Audio queue size: {cs.audio_queue.qsize()}")
 
 
 if __name__ == "__main__":
     in_vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',
                'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
 
-    out_vars = ['out_0', 'out_1', 'out_2', 'out_3']
+    out_vars = ['out_1', 'out_2', 'out_3', 'out_4']
 
     parser = argparse.ArgumentParser(description="faab-callback")
     parser.add_argument('--osc', action='store_true', help='Use OSC server')
@@ -279,7 +293,7 @@ if __name__ == "__main__":
     else:
         osc_ip, osc_port = None, None
 
-    streamer = Streamer()
+    streamer = Streamer(ip="192.168.0.199")
     streamer.connect()
 
     sample_rate = streamer.sample_rate / 2  # analog rate is half audio rate
@@ -308,9 +322,9 @@ if __name__ == "__main__":
         lp_filter_freq=5000,
         envelope_len=256,
         num_of_iterations_in_this_model_check=100,
-        init_ratio_rising_threshold=2.5,
-        init_ratio_falling_threshold=1.3,
-        threshold_leak=0.01,
+        init_ratio_rising_threshold=30,
+        init_ratio_falling_threshold=10,
+        threshold_leak=1,
         trigger_width=25,
         trigger_idx=4,
         running_norm=True,
