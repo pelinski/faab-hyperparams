@@ -39,16 +39,16 @@ class AudioDataPlotter:
         self.new_signal_data_available = False
         self.new_spectrogram_available = False
 
-    def update_signal_data(self, data, data_len):
+    def update_signal_data(self, signal_data, signal_data_len):
         """Update the audio data from your callback"""
-        if data_len != self.block_size:
+        if signal_data_len != self.block_size:
             print(
-                f"Warning: Expected block size {self.block_size}, got {data_len}")
+                f"Warning: Expected block size {self.block_size}, got {signal_data_len}")
 
         # ref timestamp is audio frame from Bela
-        ref_timestamp = data["ref_timestamp"]
+        ref_timestamp = signal_data["ref_timestamp"]
         # timestamps in seconds
-        ts = [(ref_timestamp/2 + i) / self.sample_rate for i in range(data_len)]
+        ts = [(ref_timestamp/2 + i) / self.sample_rate for i in range(signal_data_len)]
 
         with self.data_lock:
             # Extend deques - automatic rollover when maxlen is reached
@@ -56,19 +56,23 @@ class AudioDataPlotter:
 
             # Append new data for each variable
             for var in self.signal_vars:
-                if var in data:
-                    self.current_signal_data[var].extend(data[var])
+                if var in signal_data:
+                    self.current_signal_data[var].extend(signal_data[var])
 
             self.new_signal_data_available = True
 
-    def update_spectrograms(self, spectral_results):
+    def update_spectrograms(self, spectrogram_data):
         """Update spectrogram data from MultiScaleSpectralDiff results."""
         if not self.enable_spectrograms:
             return
 
         with self.data_lock:
-            for scale_key, scale_data in spectral_results.items():
-                if scale_data is None:
+            
+            ref_timestamp = spectrogram_data.get("ref_timestamp", None)
+            t0 = ref_timestamp / self.sample_rate if ref_timestamp else 0
+            
+            for scale_key, scale_data in spectrogram_data.items():
+                if scale_data is None or scale_key == "ref_timestamp":
                     continue
 
                 # Initialize storage for this scale if needed
@@ -76,7 +80,8 @@ class AudioDataPlotter:
                     self.current_spectrogram_data[scale_key] = {
                         'accumulated_spectrogram': None,
                         'freq_bins': None,
-                        'time_axis': None
+                        'current_time_start': t0,  # Track the current time window start
+                        'frames_per_block': None
                     }
 
                     # Store metadata
@@ -100,13 +105,13 @@ class AudioDataPlotter:
                     storage['accumulated_spectrogram'] = np.zeros(
                         (max_time_frames, n_freq_bins), dtype=np.float32)
                     storage['freq_bins'] = n_freq_bins
-
-                    # Create time axis for the full accumulated spectrogram
-                    # Each frame represents hop_length samples
+                    storage['frames_per_block'] = n_frames
+                    storage['current_time_start'] = t0
+                else:
+                    # Update the time window start based on how much data we're shifting
                     hop_length = scale_data['hop_length']
                     time_per_frame = hop_length / self.sample_rate
-                    storage['time_axis'] = np.arange(
-                        max_time_frames) * time_per_frame
+                    storage['current_time_start'] += n_frames * time_per_frame
 
                 # Shift existing data left and add new data on the right
                 accumulated = storage['accumulated_spectrogram']
@@ -128,7 +133,17 @@ class AudioDataPlotter:
         # Shape: (total_time_frames, freq_bins)
         spectrogram = storage['accumulated_spectrogram']
         frequencies = self.scale_metadata[scale_key]['frequencies']
-        time_axis = storage['time_axis']
+        
+        # Calculate the current time axis based on the rolling window
+        hop_length = self.scale_metadata[scale_key]['hop_length']
+        time_per_frame = hop_length / self.sample_rate
+        total_frames = spectrogram.shape[0]
+        
+        # The time axis should represent the current rolling window
+        current_time_start = storage['current_time_start']
+        time_duration = total_frames * time_per_frame
+        time_start = current_time_start - time_duration  # Start of the visible window
+        time_end = current_time_start  # End of the visible window
 
         # Transpose for Bokeh (freq_bins, time_frames)
         image_data = spectrogram.T
@@ -140,26 +155,22 @@ class AudioDataPlotter:
         freq_end_cropped = frequencies[freq_mask][-1] if np.any(
             freq_mask) else max_freq
 
-        # Calculate time extent
-        time_start = 0
-        time_end = time_axis[-1] - time_axis[0] + (time_axis[1] - time_axis[0])
-
         # Calculate color scale
         abs_max = np.max(np.abs(image_data_cropped)
-                         ) if image_data_cropped.size > 0 else 1
+                        ) if image_data_cropped.size > 0 else 1
         if abs_max == 0:
             abs_max = 1
 
         return {
             'image': [image_data_cropped],
-            'x': time_start,
+            'x': time_start,  # Now uses the actual current time window
             'y': frequencies[0],
-            'dw': time_end,
+            'dw': time_end - time_start,  # Width of the time window
             'dh': freq_end_cropped - frequencies[0],
             'abs_max': abs_max,
             'window_size': self.scale_metadata[scale_key]['window_size'],
         }
-
+        
     def _create_bokeh_app(self):
         def app(doc):
             # Create data source for audio plots
@@ -234,58 +245,59 @@ class AudioDataPlotter:
 
                     spectrogram_plots.append(p)
 
-  # Create layout: 2 columns - audio plots (3x4) + spectrograms (2x2)
+            def arrange_layout(signal_plots, spectrogram_plots):
+                # Column 1: Audio plots in 3 rows of 4
+                audio_grid_rows = []
+                for row in range(3):
+                    start_idx = row * 4
+                    end_idx = start_idx + 4
+                    row_plots = signal_plots[start_idx:end_idx] if start_idx < len(
+                        signal_plots) else []
+                    if row_plots:
+                        # Pad row with None if needed to maintain 4 columns
+                        while len(row_plots) < 4:
+                            row_plots.append(None)
+                        audio_grid_rows.append(row_plots)
 
-            # Column 1: Audio plots in 3 rows of 4
-            audio_grid_rows = []
-            for row in range(3):
-                start_idx = row * 4
-                end_idx = start_idx + 4
-                row_plots = signal_plots[start_idx:end_idx] if start_idx < len(
-                    signal_plots) else []
-                if row_plots:
-                    # Pad row with None if needed to maintain 4 columns
-                    while len(row_plots) < 4:
-                        row_plots.append(None)
-                    audio_grid_rows.append(row_plots)
+                audio_column = bokeh.layouts.gridplot(
+                    audio_grid_rows,
+                    sizing_mode="scale_width"
+                ) if audio_grid_rows else None
 
-            audio_column = bokeh.layouts.gridplot(
-                audio_grid_rows,
-                sizing_mode="scale_width"
-            ) if audio_grid_rows else None
+                # Column 2: Spectrograms in 2 rows of 2
+                spectrogram_column = None
+                if self.enable_spectrograms and spectrogram_plots:
+                    spec_grid_rows = []
+                    # Row 1: First 2 spectrograms
+                    if len(spectrogram_plots) >= 2:
+                        spec_grid_rows.append(spectrogram_plots[:2])
+                    # Row 2: Next 2 spectrograms
+                    if len(spectrogram_plots) >= 4:
+                        spec_grid_rows.append(spectrogram_plots[2:4])
+                    elif len(spectrogram_plots) == 3:
+                        # If only 3 spectrograms, put the 3rd one alone in row 2
+                        spec_grid_rows.append([spectrogram_plots[2], None])
 
-            # Column 2: Spectrograms in 2 rows of 2
-            spectrogram_column = None
-            if self.enable_spectrograms and spectrogram_plots:
-                spec_grid_rows = []
-                # Row 1: First 2 spectrograms
-                if len(spectrogram_plots) >= 2:
-                    spec_grid_rows.append(spectrogram_plots[:2])
-                # Row 2: Next 2 spectrograms
-                if len(spectrogram_plots) >= 4:
-                    spec_grid_rows.append(spectrogram_plots[2:4])
-                elif len(spectrogram_plots) == 3:
-                    # If only 3 spectrograms, put the 3rd one alone in row 2
-                    spec_grid_rows.append([spectrogram_plots[2], None])
+                    if spec_grid_rows:
+                        spectrogram_column = bokeh.layouts.gridplot(
+                            spec_grid_rows,
+                            sizing_mode="scale_width"
+                        )
 
-                if spec_grid_rows:
-                    spectrogram_column = bokeh.layouts.gridplot(
-                        spec_grid_rows,
+                # Combine columns
+                if audio_column and spectrogram_column:
+                    layout = bokeh.layouts.row(
+                        audio_column,
+                        spectrogram_column,
                         sizing_mode="scale_width"
                     )
-
-            # Combine columns
-            if audio_column and spectrogram_column:
-                layout = bokeh.layouts.row(
-                    audio_column,
-                    spectrogram_column,
-                    sizing_mode="scale_width"
-                )
-            elif audio_column:
-                layout = audio_column
-            else:
-                layout = bokeh.layouts.row(
-                    signal_plots, sizing_mode="scale_width")
+                elif audio_column:
+                    layout = audio_column
+                else:
+                    layout = bokeh.layouts.row(
+                        signal_plots, sizing_mode="scale_width")
+                    
+                return layout
 
             def update():
                 with self.data_lock:
@@ -330,6 +342,7 @@ class AudioDataPlotter:
 
             # Add periodic callback
             doc.add_periodic_callback(update, self.plot_update_delay)
+            layout = arrange_layout(signal_plots, spectrogram_plots)
             doc.add_root(layout)
 
         return app

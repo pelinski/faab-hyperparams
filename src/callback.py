@@ -218,12 +218,13 @@ async def callback(block, cs, streamer):
                 cs.audio_queue.put_nowait(stereo_data.tobytes())
 
         if cs.plotter is not None:
-            cs.plotter.update_spectrograms(mssdiff_results)
+            cs.plotter.update_spectrograms({"ref_timestamp": ref_timestamp,
+                **mssdiff_results})
             plotter_signals_data = {"ref_timestamp": ref_timestamp,
                                     **{f"gFaabSensor_{i+1}": filtered_in[i] for i in range(cs.in_size)},
                                     **{f"out_{i+1}": filtered_out[i] for i in range(cs.out_size)}}
             cs.plotter.update_signal_data(
-                plotter_signals_data, data_len=cs.seq_len)
+                plotter_signals_data, signal_data_len=cs.seq_len)
 
         # permute output
         if cs.permute_out:
