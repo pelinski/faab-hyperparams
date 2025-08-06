@@ -230,7 +230,7 @@ async def callback(block, cs, streamer):
         if cs.audio_stream:  # could spatialise
             if cs.mssd_enabled:
                 mssd_audio = cs.mssd.latest_mssd_audio
-                mixed_audio = out_audio + mssd_audio
+                mixed_audio = mssd_audio
             else:
                 mixed_audio = out_audio
             stereo_data = np.column_stack(
@@ -384,7 +384,7 @@ if __name__ == "__main__":
         trigger_idx=4,
         running_norm=True,
         permute_out=False,
-        path="src/models/trained/transformer-autoencoder-jan",
+        path="src/models/trained/transformer-autoencoder-timecomp-jan",
         osc_ip=osc_ip,
         osc_port=osc_port,
         plotter=plotter,

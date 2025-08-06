@@ -1,4 +1,4 @@
-# faab-ai-mami
+# faab-hyperparams
 
 this code has been tested with Bela at `dev` commit `71a6e62a`
 
@@ -6,26 +6,30 @@ Instructions to set up the Bela are in [setup-bela.md](setup-bela.md). If you ha
 
 # Setup
 
-## Install pipenv
-
-This project uses `pipenv` to manage the dependencies.
+To use `pyaudio` we need `portaudio` installed. In mac (for other platforms see [portaudio installation instructions](https://pypi.org/project/PyAudio/))
 
 ```bash
-pip install pipenv
+brew install portaudio
 ```
 
-## Clone this repo on your computer
+This project uses `uv` to manage dependencies
+
+```bash
+pip install uv
+```
+
+Clone this repository with submodules:
 
 ```bash
 git clone --recurse-submodules -j8  git@github.com:pelinski/ai-mami-faab.git
 ```
 
-## Install the python dependencies
+Install the dependencies with `uv`:
 
 ```bash
-cd ai-mami-faab # or the folder where you cloned the repo
-pipenv install
-pipenv run pip install torch # --index-url https://download.pytorch.org/whl/cu117 # for g15
+cd faab-hyperparams # or the folder where you cloned the repo
+uv venv
+uv pip install torch #==2.0.1+cu117 --index-url https://download.pytorch.org/whl/cu117 # for g15
 ```
 
 ## Download trained models
