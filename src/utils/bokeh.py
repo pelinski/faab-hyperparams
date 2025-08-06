@@ -1,3 +1,4 @@
+# with claude
 import bokeh
 import bokeh.plotting
 import bokeh.models
@@ -9,7 +10,7 @@ import numpy as np
 from bokeh.palettes import RdBu
 
 
-class AudioDataPlotter:
+class Plotter:
     def __init__(self, signal_vars, spectrogram_vars, sample_rate=44100, y_range=(-1, 1), rollover_blocks=3,
                  plot_update_delay=50, port=5006, block_size=1024, enable_spectrograms=True, max_freq_spectrogram=5000):
 
@@ -48,7 +49,8 @@ class AudioDataPlotter:
         # ref timestamp is audio frame from Bela
         ref_timestamp = signal_data["ref_timestamp"]
         # timestamps in seconds
-        ts = [(ref_timestamp/2 + i) / self.sample_rate for i in range(signal_data_len)]
+        ts = [(ref_timestamp/2 + i) /
+              self.sample_rate for i in range(signal_data_len)]
 
         with self.data_lock:
             # Extend deques - automatic rollover when maxlen is reached
@@ -67,10 +69,10 @@ class AudioDataPlotter:
             return
 
         with self.data_lock:
-            
+
             ref_timestamp = spectrogram_data.get("ref_timestamp", None)
             t0 = ref_timestamp / self.sample_rate if ref_timestamp else 0
-            
+
             for scale_key, scale_data in spectrogram_data.items():
                 if scale_data is None or scale_key == "ref_timestamp":
                     continue
@@ -133,12 +135,12 @@ class AudioDataPlotter:
         # Shape: (total_time_frames, freq_bins)
         spectrogram = storage['accumulated_spectrogram']
         frequencies = self.scale_metadata[scale_key]['frequencies']
-        
+
         # Calculate the current time axis based on the rolling window
         hop_length = self.scale_metadata[scale_key]['hop_length']
         time_per_frame = hop_length / self.sample_rate
         total_frames = spectrogram.shape[0]
-        
+
         # The time axis should represent the current rolling window
         current_time_start = storage['current_time_start']
         time_duration = total_frames * time_per_frame
@@ -157,7 +159,7 @@ class AudioDataPlotter:
 
         # Calculate color scale
         abs_max = np.max(np.abs(image_data_cropped)
-                        ) if image_data_cropped.size > 0 else 1
+                         ) if image_data_cropped.size > 0 else 1
         if abs_max == 0:
             abs_max = 1
 
@@ -170,7 +172,7 @@ class AudioDataPlotter:
             'abs_max': abs_max,
             'window_size': self.scale_metadata[scale_key]['window_size'],
         }
-        
+
     def _create_bokeh_app(self):
         def app(doc):
             # Create data source for audio plots
@@ -246,18 +248,34 @@ class AudioDataPlotter:
                     spectrogram_plots.append(p)
 
             def arrange_layout(signal_plots, spectrogram_plots):
-                # Column 1: Audio plots in 3 rows of 4
+                # Separate sonified_mix from other signals
+                regular_plots = []
+                mix_plots = []
+
+                for plot in signal_plots:
+                    if "mssd_audio" in plot.title.text:
+                        mix_plots.append(plot)
+                    else:
+                        regular_plots.append(plot)
+
+                # Column 1: Regular audio plots in 3 rows of 4
                 audio_grid_rows = []
                 for row in range(3):
                     start_idx = row * 4
                     end_idx = start_idx + 4
-                    row_plots = signal_plots[start_idx:end_idx] if start_idx < len(
-                        signal_plots) else []
+                    row_plots = regular_plots[start_idx:end_idx] if start_idx < len(
+                        regular_plots) else []
                     if row_plots:
                         # Pad row with None if needed to maintain 4 columns
                         while len(row_plots) < 4:
                             row_plots.append(None)
                         audio_grid_rows.append(row_plots)
+
+                # Add mix plot as a separate row if it exists
+                if mix_plots:
+                    # Create a row with the mix plot and padding
+                    mix_row = mix_plots + [None] * (4 - len(mix_plots))
+                    audio_grid_rows.append(mix_row)
 
                 audio_column = bokeh.layouts.gridplot(
                     audio_grid_rows,
@@ -296,7 +314,7 @@ class AudioDataPlotter:
                 else:
                     layout = bokeh.layouts.row(
                         signal_plots, sizing_mode="scale_width")
-                    
+
                 return layout
 
             def update():

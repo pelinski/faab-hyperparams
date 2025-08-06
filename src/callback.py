@@ -9,17 +9,17 @@ from scipy import signal
 from pybela import Streamer
 from pythonosc.udp_client import SimpleUDPClient
 from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, get_models_range, calc_ratio_amplitude_variance, change_model, dc_block
-from utils.bokeh import AudioDataPlotter
-from utils.mssdiff import MultiScaleSpectralDiff
+from utils.bokeh import Plotter
+from utils.mssd import MultiScaleSpectralDiff
 
 # import time
 # import psutil
 
 
 class CallbackState:
-    def __init__(self, seq_len, num_models, in_size, out_size, sample_rate, num_blocks_to_compute_avg, num_blocks_to_compute_std, hp_filter_freq, lp_filter_freq, envelope_len, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None, plotter=None, out2Bela=False, play_audio=False):
+    def __init__(self, seq_len, num_models, in_size, out_size, sample_rate, num_blocks_to_compute_avg, num_blocks_to_compute_std, hp_filter_freq, lp_filter_freq, envelope_len, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None, plotter=None, out2Bela=False, play_audio=False, audio_queue_len=10, mssd_enabled=False):
 
-        # -- params --
+        ### start of params ###
         self.seq_len = seq_len
         self.num_models = num_models
         self.in_size = in_size
@@ -40,14 +40,18 @@ class CallbackState:
         self.plotter = plotter
         self.out2Bela = out2Bela
         self.play_audio = play_audio
+        self.audio_queue_len = audio_queue_len
+        self.mssd_enabled = mssd_enabled
+        ### end of params ###
 
         print(f"Using device: {self.device}")
+        print(f"\nAudio enabled: {self.play_audio}\nOSC enabled: {self.osc_ip is not None}\nPlotting enabled: {self.plotter is not None}\nMSSD enabled: {self.mssd_enabled}\n ")
 
         # init osc server
         if self.osc_ip and self.osc_port:
             self.osc_client = SimpleUDPClient(self.osc_ip, self.osc_port)
 
-        # init models
+        ### start of models init ###
 
         # preload models
         # models in desc order of train loss, take best 20
@@ -59,6 +63,7 @@ class CallbackState:
             self.models_running_range[_id] = {"min": torch.FloatTensor([0, 0, 0, 0]).to(
                 self.device), "max": torch.FloatTensor([0, 0, 0, 0]).to(self.device)}
 
+        # warm up models
         print("Warming up models...")
         for _id in sorted_models:
             # Create dummy input with same shape as real data
@@ -79,11 +84,11 @@ class CallbackState:
             path=path, sorted=True, num_models=num_models)
         starter_id = sorted_models[-1]  # h0o65m8s is nice
 
+        ### end of models init ###
+
+        ### start of filters init ###
         self.bridge_dc_blocker = {'prev_in': 0, 'prev_out': 0}
 
-        # self.out_dc_blocker = {'prev_in': 0, 'prev_out': 0}
-
-        # -- filters --
         # input bp filters
         self.in_bp = [signal.butter(
             2, [hp_filter_freq, lp_filter_freq], 'bandpass', fs=sample_rate, output='sos') for _ in range(in_size)]
@@ -99,33 +104,15 @@ class CallbackState:
         # envelope
         self.envelope_len = envelope_len
 
-        # variables for the callback
-        self.model = self.models[starter_id]
-        self.gain = 4 * [1.0]
-        self.change_model = 0
-        self.ratio_rising_threshold, self.ratio_falling_threshold = init_ratio_rising_threshold, init_ratio_falling_threshold
-        self.iterations_in_this_model_counter = 0
-        self.bridge_piezo_avg = deque(maxlen=num_blocks_to_compute_avg)
-        self.model_out_std = deque(maxlen=num_blocks_to_compute_std)
-        self.debug_counter = 0
-        self.model_perm = [0, 1, 2, 3]
-        self.prev_model = self.models[starter_id]  # for crossfading
-        self.mssdiff_scales = [
-            {'window_size': 128, 'hop_length': 32},
-            {'window_size': 256, 'hop_length': 64},
-            {'window_size': 512, 'hop_length': 128},
-            {'window_size': 1024, 'hop_length': 256}
-        ]
-        self.mssdiff = MultiScaleSpectralDiff(
-            sample_rate=sample_rate, scales=self.mssdiff_scales)
+        ### end of filters init ###
 
-        # audio output
+        ### start of audio playback init ###
         if self.play_audio:
             def _audio_player(self):
                 # Pre-fill queue with silence to prevent initial underrun
                 # Stereo silence
                 silence = np.zeros(1024, dtype=np.float32).tobytes()
-                for _ in range(2):  # Add 10 blocks of silence
+                for _ in range(2):
                     try:
                         self.audio_queue.put_nowait(silence)
                     except queue.Full:
@@ -142,19 +129,42 @@ class CallbackState:
                         continue
 
             # latency!!! (increase if using bokeh plotter)
-            self.audio_queue = queue.Queue(maxsize=10)
+            self.audio_queue = queue.Queue(maxsize=self.audio_queue_len)
             self.audio_thread = threading.Thread(
                 target=_audio_player, daemon=True, args=(self,))
             self.audio = pyaudio.PyAudio()
-            self.audio_stream = self.audio.open(
-                format=pyaudio.paFloat32,
-                channels=2,
-                rate=int(sample_rate),
-                output=True,
-                frames_per_buffer=1024)
+            self.audio_stream = self.audio.open(format=pyaudio.paFloat32, channels=2, rate=int(
+                sample_rate), output=True, frames_per_buffer=1024)
             self.audio_thread.start()
+        ### end of audio playback init ###
 
+        ### mssd threading ###
+        if self.mssd_enabled:
+            self.mssd_scales = [
+                {'window_size': 128, 'hop_length': 32},
+                {'window_size': 256, 'hop_length': 64},
+                {'window_size': 512, 'hop_length': 128},
+                {'window_size': 1024, 'hop_length': 1024}
+            ]
+            self.mssd = MultiScaleSpectralDiff(
+                sample_rate=sample_rate, scales=self.mssd_scales, enable_sonification=True)
+            self.mssd_thread = threading.Thread(
+                target=self.mssd._mssd_worker, daemon=True)
+            self.mssd_thread.start()
+            ### end of mssd threading ###
 
+        #### start of variables for the callback ###
+        self.model = self.models[starter_id]
+        self.gain = 4 * [1.0]
+        self.change_model = 0
+        self.ratio_rising_threshold, self.ratio_falling_threshold = init_ratio_rising_threshold, init_ratio_falling_threshold
+        self.iterations_in_this_model_counter = 0
+        self.bridge_piezo_avg = deque(maxlen=num_blocks_to_compute_avg)
+        self.model_out_std = deque(maxlen=num_blocks_to_compute_std)
+        self.debug_counter = 0
+        self.model_perm = [0, 1, 2, 3]
+        self.prev_model = self.models[starter_id]  # for crossfading
+        ### end of variables for the callback ###
 # sound_threshold =0.021
 
 
@@ -163,20 +173,24 @@ async def callback(block, cs, streamer):
     with torch.no_grad():
         ref_timestamp = block[0]["buffer"]["ref_timestamp"]
 
+        ### start of input filtering ###
         # filter input data -- no normalisation because it removes the relative differences between sensors
         filtered_in = [[] for _ in range(cs.in_size)]
         for idx, var in enumerate(block):
             _in = var["buffer"]["data"]
             filtered_in[idx], cs.in_bp_zi[idx] = signal.sosfilt(
                 cs.in_bp[idx], _in, zi=cs.in_bp_zi[idx])
+        ### end of input filtering ###
 
+        ### start of model inference ###
         data_tensor = torch.stack([torch.as_tensor(
             filtered_in[idx], dtype=torch.float32) for idx in range(cs.in_size)])  # num_features, 1024
         input = data_tensor.permute(1, 0)  # seq_len, num_features
-
         out = cs.model.forward_encoder(input.to(cs.device)).permute(
             1, 0)  # num_outputs, seq_len
+        ### end of model inference ###
 
+        # needed for crossfading
         out_prev_model = None
         if cs.iterations_in_this_model_counter == 0:
             out_prev_model = cs.prev_model.forward_encoder(
@@ -184,32 +198,43 @@ async def callback(block, cs, streamer):
 
         # outputs --> [ff_size, num_heads, num_layers, learning_rate]
 
-        # filtered out
+        ### start of output filtering ###
         filtered_out = [[] for _ in range(cs.out_size)]
         for idx in range(cs.out_size):
             _out = out[idx].cpu().numpy().tolist()  # convert to list
             filtered_out[idx], cs.out_bp_zi[cs.model.id][idx] = signal.sosfilt(
                 cs.out_bp[cs.model.id][idx], _out, zi=cs.out_bp_zi[cs.model.id][idx])
+
+            # if this is the first iteration in this model, crossfade with previous model to avoid clicks
             if out_prev_model is not None:
                 _out_prev = out_prev_model[idx].cpu().numpy().tolist()
                 _filtered_out_prev, cs.out_bp_zi[cs.prev_model.id][idx] = signal.sosfilt(
                     cs.out_bp[cs.prev_model.id][idx], _out_prev, zi=cs.out_bp_zi[cs.prev_model.id][idx])
-                # 0 to 1 over 1024 samples
                 fade_steps = np.linspace(0, 1, cs.seq_len)
-                filtered_out[idx] = np.array(filtered_out[idx]) * fade_steps + \
-                    np.array(_filtered_out_prev) * (1 - fade_steps)
-
+                filtered_out[idx] = np.array(
+                    filtered_out[idx]) * fade_steps + np.array(_filtered_out_prev) * (1 - fade_steps)
         filtered_out = np.array(filtered_out)
+        ### end of output filtering ###
 
-        # multiscale spectral difference
         in_audio = data_tensor.sum(axis=0).numpy().astype(np.float32)  # in
-        out_audio = 10 * filtered_out.sum(axis=0).astype(np.float32)  # out
+        out_audio = filtered_out.sum(axis=0).astype(np.float32)  # out
 
-        mssdiff_results = cs.mssdiff.process_block(in_audio, out_audio)
+        if cs.mssd_enabled:
+            try:
+                cs.mssd.mssd_queue.put_nowait((in_audio, out_audio))
+            except queue.Full:
+                print("MSSD queue is full, dropping audio data")
+                cs.mssd.mssd_queue.get_nowait()
+                cs.mssd.mssd_queue.put_nowait((in_audio, out_audio))
 
         if cs.audio_stream:  # could spatialise
+            if cs.mssd_enabled:
+                mssd_audio = cs.mssd.latest_mssd_audio
+                mixed_audio = out_audio + mssd_audio
+            else:
+                mixed_audio = out_audio
             stereo_data = np.column_stack(
-                [out_audio, out_audio]).flatten().astype(np.float32)
+                [mixed_audio, mixed_audio]).flatten().astype(np.float32)
             try:
                 cs.audio_queue.put_nowait(stereo_data.tobytes())
             except queue.Full:
@@ -218,11 +243,20 @@ async def callback(block, cs, streamer):
                 cs.audio_queue.put_nowait(stereo_data.tobytes())
 
         if cs.plotter is not None:
-            cs.plotter.update_spectrograms({"ref_timestamp": ref_timestamp,
-                **mssdiff_results})
+            # update spectrograms
+            if cs.mssd_enabled:
+                try:
+                    mssd_per_scale, _ = cs.mssd.mssd_results.get_nowait()
+                    cs.plotter.update_spectrograms(
+                        {"ref_timestamp": ref_timestamp, **mssd_per_scale})
+                except queue.Empty:
+                    pass
+
+            # update signals
             plotter_signals_data = {"ref_timestamp": ref_timestamp,
                                     **{f"gFaabSensor_{i+1}": filtered_in[i] for i in range(cs.in_size)},
-                                    **{f"out_{i+1}": filtered_out[i] for i in range(cs.out_size)}}
+                                    **{f"out_{i+1}": filtered_out[i] for i in range(cs.out_size)}, **{f"mssd_audio": mixed_audio}
+                                    }
             cs.plotter.update_signal_data(
                 plotter_signals_data, signal_data_len=cs.seq_len)
 
@@ -292,8 +326,8 @@ if __name__ == "__main__":
 
     out_vars = ['out_1', 'out_2', 'out_3', 'out_4']
 
-    spec_vars = ["mssdiff_scale_0_128", "mssdiff_scale_1_256",
-                 "mssdiff_scale_2_512", "mssdiff_scale_3_1024"]
+    spec_vars = ["mssd_scale_0_128", "mssd_scale_1_256",
+                 "mssd_scale_2_512", "mssd_scale_3_1024"]
 
     parser = argparse.ArgumentParser(description="faab-callback")
     parser.add_argument('--osc', action='store_true', help='Use OSC server')
@@ -303,6 +337,8 @@ if __name__ == "__main__":
                         help='Send output to Bela')
     parser.add_argument('--audio', action='store_true',
                         help="Play model output as audio")
+    parser.add_argument('--mssd', action='store_true',
+                        help="Enable MSSD processing")
     args = parser.parse_args()
 
     if args.osc:
@@ -317,8 +353,8 @@ if __name__ == "__main__":
 
     plotter = None
     if args.plot:
-        plotter = AudioDataPlotter(
-            signal_vars=[*in_vars, *out_vars],
+        plotter = Plotter(
+            signal_vars=[*in_vars, *out_vars, "mssd_audio"],
             spectrogram_vars=spec_vars,
             rollover_blocks=3,
             plot_update_delay=50,
@@ -340,7 +376,7 @@ if __name__ == "__main__":
         hp_filter_freq=1,
         lp_filter_freq=5000,
         envelope_len=256,
-        num_of_iterations_in_this_model_check=100,
+        num_of_iterations_in_this_model_check=10,
         init_ratio_rising_threshold=30,
         init_ratio_falling_threshold=10,
         threshold_leak=1,
@@ -353,7 +389,9 @@ if __name__ == "__main__":
         osc_port=osc_port,
         plotter=plotter,
         out2Bela=args.out2Bela,
-        play_audio=args.audio
+        play_audio=args.audio,
+        audio_queue_len=10,  # 10 if using bokeh
+        mssd_enabled=args.mssd
     )
 
     streamer.start_streaming(
