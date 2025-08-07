@@ -10,6 +10,7 @@ from bokeh.models import Legend
 from bokeh.embed import file_html
 from bokeh.resources import CDN
 from models import TransformerAutoencoder
+from scipy import interpolate
 
 # -- train loop --
 
@@ -229,7 +230,7 @@ def get_models_range(path='src/models/trained'):
     return json.load(open(f'{path}/models_range.json'))
 
 
-def find_closest_model(output_coordinates, scaled_model_coordinates):
+def find_closest_model(output_coordinates, scaled_model_coordinates, exclude=None):
 
     model_keys, scaled_model_coordinates = zip(
         *scaled_model_coordinates.items())
@@ -238,6 +239,11 @@ def find_closest_model(output_coordinates, scaled_model_coordinates):
     # Calculate the Euclidean distances
     distances = np.linalg.norm(
         scaled_model_coordinates - output_coordinates, axis=1)
+
+    if exclude is not None:
+        # Exclude the model if specified
+        exclude_index = model_keys.index(exclude)
+        distances[exclude_index] = np.inf
 
     # Find the index of the row with the smallest distance
     closest_row_index = np.argmin(distances)
@@ -331,3 +337,99 @@ class weighted_MSELoss(torch.nn.Module):
         """
         loss = ((inputs - targets)**2)*self.weights
         return torch.sqrt(loss.mean())
+
+
+def normalise(out, cs):
+    # -- normalisation --
+    # running normalisation (taking max and min from the current run)
+    if cs.running_norm:
+        cs.models_running_range[cs.model.id]["min"] = torch.stack(
+            (cs.models_running_range[cs.model.id]["min"], out.min(dim=1).values), dim=0).min(dim=0).values
+        cs.models_running_range[cs.model.id]["max"] = torch.stack(
+            (cs.models_running_range[cs.model.id]["max"], out.max(dim=1).values), dim=0).max(dim=0).values
+
+        _min, _max = cs.models_running_range[cs.model.id]["min"], cs.models_running_range[cs.model.id]["max"]
+
+    # absolute normalisation (taking max and min from passing the full dataset)
+    else:
+        _model_range = cs.full_dataset_models_range[cs.model.id]
+        _min, _max = torch.FloatTensor(_model_range["min"]).to(
+            cs.device), torch.FloatTensor(_model_range["max"]).to(cs.device)
+
+    # -- normalise before sending to Bela!! --
+    normalised_out = (out - _min.unsqueeze(1)) / \
+        (_max - _min).unsqueeze(1)
+
+    return normalised_out
+
+
+def change_model(out, cs):
+    # high sound amplitude and model has low variance --> change model
+    # streamer.send_buffer(
+    #     trigger_idx, 'f', seq_len, trigger_width*[1.0] + (seq_len-trigger_width)*[0.0])  # change trigger
+    cs.prev_model = cs.model
+
+    out_coordinates = out[:, -1].tolist()
+    out_coordinates = [c * g for c,
+                       g in zip(out_coordinates, cs.gain)]
+
+    # find the closest model to the out_ coordinates, can't be the same as the current model
+
+    closest_model, _ = find_closest_model(
+        out_coordinates, cs.models_coordinates, exclude=cs.model.id)
+    cs.model = cs.models[closest_model]
+    if cs.permute_out:
+        cs.model_perm = torch.randperm(4)
+
+    # reset counter and thresholds
+    cs.iterations_in_this_model_counter = 0
+    cs.ratio_rising_threshold, cs.ratio_falling_threshold = cs.init_ratio_rising_threshold, cs.init_ratio_falling_threshold
+
+    print(cs.model.id, np.round(out_coordinates, 4))
+
+
+def calc_ratio_amplitude_variance(out, bridge_piezo, cs):
+    # -- amplitude --
+    cs.bridge_piezo_avg.append(np.average(np.absolute(bridge_piezo)))
+    weighted_avg_bridge_piezo = np.average(
+        cs.bridge_piezo_avg, weights=range(1, len(cs.bridge_piezo_avg)+1))
+
+    # -- model variance --
+    cs.model_out_std.append(out.std(axis=1).mean())
+    weighted_model_out_std = np.average(
+        cs.model_out_std, weights=range(1, len(cs.model_out_std)+1))
+
+    ratio = weighted_model_out_std / weighted_avg_bridge_piezo
+
+    if cs.debug_counter % 10 == 0:
+        print(
+            f" Ratio: {ratio:.2f}, Weighted model out std: {weighted_model_out_std:.4f}, Weighted bridge piezo avg: {weighted_avg_bridge_piezo:.4f}")
+
+    return ratio
+
+
+def dc_block(data, blocker, alpha=0.995):
+    """Simple DC blocking filter"""
+    result = []
+    for sample in data:
+        blocker['prev_out'] = alpha * \
+            (blocker['prev_out'] + sample - blocker['prev_in'])
+        blocker['prev_in'] = sample
+        result.append(blocker['prev_out'])
+    return result
+
+
+def interpolate_signal(y, tgt_len):
+    """Interpolate the input to the target length using cubic spline interpolation.
+
+    Args:
+        y (np.ndarray): Input data to interpolate.
+        tgt_len (int): Target length of the output.
+
+    Returns:
+        np.ndarray: Interpolated data.
+    """
+    original_indices = np.linspace(0, 1, num=len(y))  # x
+    new_indices = np.linspace(0, 1, num=tgt_len)  # new_x
+    coeffs = interpolate.splrep(original_indices, y)
+    return interpolate.splev(new_indices, coeffs)

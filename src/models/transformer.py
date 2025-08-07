@@ -164,6 +164,8 @@ class TransformerAutoencoder(torch.nn.Module):
     def forward_encoder(self, src):
         x = self.InputLayerEncoder(src)  # N x comp_seq_len x comp_feat_len
         memory = self.Encoder(x)  # N x comp_seq_len x comp_feat_len
+        # remove first dimension if batch size is 1
+        memory = memory.squeeze(0)
         return memory
 
 

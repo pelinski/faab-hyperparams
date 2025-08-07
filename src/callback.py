@@ -1,65 +1,57 @@
 import torch
 import numpy as np
-import biquad
 import argparse
-from collections import deque  # circular buffers
-from scipy.interpolate import interp1d
+import pyaudio
+from collections import deque
+import queue
+import threading
+from scipy import signal
 from pybela import Streamer
 from pythonosc.udp_client import SimpleUDPClient
-from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, find_closest_model, get_models_range
+from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, get_models_range, calc_ratio_amplitude_variance, change_model, dc_block, interpolate_signal
+from utils.bokeh import Plotter
+from utils.mssd import MultiScaleSpectralDiff
 
-# TODO add dc filtering to latent space?
-# TODO add envelopes to avoid clipping?
+# import time
+# import psutil
 
 
 class CallbackState:
-    def __init__(self, seq_len,
-                 num_models,
-                 out_size,
-                 num_blocks_to_compute_avg,
-                 num_blocks_to_compute_std,
-                 out_hp_filter_freq,
-                 out_lp_filter_freq,
-                 envelope_len,
-                 num_of_iterations_in_this_model_check,
-                 init_ratio_rising_threshold,
-                 init_ratio_falling_threshold,
-                 threshold_leak,
-                 trigger_width,
-                 trigger_idx,
-                 running_norm,
-                 permute_out,
-                 path,
-                 osc_ip=None,
-                 osc_port=None):
+    def __init__(self, seq_len, num_models, in_size, out_size, sample_rate, num_blocks_to_compute_avg, num_blocks_to_compute_std, hp_filter_freq, lp_filter_freq, envelope_len, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None, plotter=None, out2Bela=False, play_audio=False, audio_queue_len=10, mssd_enabled=False):
 
-        # -- params --
+        ### start of params ###
         self.seq_len = seq_len
         self.num_models = num_models
+        self.in_size = in_size
         self.out_size = out_size
-        self.num_blocks_to_compute_avg = num_blocks_to_compute_avg
-        self.num_blocks_to_compute_std = num_blocks_to_compute_std
-        self.out_hp_filter_freq = out_hp_filter_freq
-        self.out_lp_filter_freq = out_lp_filter_freq
+        self.sample_rate = sample_rate
+        self.num_blocks_to_compute_avg, self.num_blocks_to_compute_std = num_blocks_to_compute_avg, num_blocks_to_compute_std
+        self.hp_filter_freq, self.lp_filter_freq = hp_filter_freq, lp_filter_freq
         self.envelope_len = envelope_len  # for envelopes when changing model
         self.num_of_iterations_in_this_model_check = num_of_iterations_in_this_model_check
-        self.init_ratio_rising_threshold = init_ratio_rising_threshold
-        self.init_ratio_falling_threshold = init_ratio_falling_threshold
-        self.threshold_leak = threshold_leak
-        self.trigger_width = trigger_width
+        self.init_ratio_rising_threshold, self.init_ratio_falling_threshold = init_ratio_rising_threshold, init_ratio_falling_threshold
+        self.threshold_leak, self.trigger_width = threshold_leak, trigger_width
         self.trigger_idx = trigger_idx
         self.running_norm = running_norm
         self.permute_out = permute_out
         self.device = get_device()
         self.path = path
-        self.osc_ip, self.osc_port = osc_ip, osc_port
-        self.osc_client = None
+        self.osc_ip, self.osc_port, self.osc_client = osc_ip, osc_port, None
+        self.plotter = plotter
+        self.out2Bela = out2Bela
+        self.play_audio = play_audio
+        self.audio_queue_len = audio_queue_len
+        self.mssd_enabled = mssd_enabled
+        ### end of params ###
+
+        print(f"Using device: {self.device}")
+        print(f"\nAudio enabled: {self.play_audio}\nOSC enabled: {self.osc_ip is not None}\nPlotting enabled: {self.plotter is not None}\nMSSD enabled: {self.mssd_enabled}\n ")
 
         # init osc server
         if self.osc_ip and self.osc_port:
             self.osc_client = SimpleUDPClient(self.osc_ip, self.osc_port)
 
-        # init models
+        ### start of models init ###
 
         # preload models
         # models in desc order of train loss, take best 20
@@ -71,6 +63,19 @@ class CallbackState:
             self.models_running_range[_id] = {"min": torch.FloatTensor([0, 0, 0, 0]).to(
                 self.device), "max": torch.FloatTensor([0, 0, 0, 0]).to(self.device)}
 
+        # warm up models
+        print("Warming up models...")
+        for _id in sorted_models:
+            # Create dummy input with same shape as real data
+            dummy_input = torch.randn(
+                self.seq_len, self.in_size).to(self.device)
+
+            # Run forward pass to initialize GPU kernels
+            with torch.no_grad():
+                _ = self.models[_id].forward_encoder(dummy_input)
+
+        print("Model warmup complete")
+
         # model space
         # min and max of model outputs (after passing the full dataset)
         self.full_dataset_models_range = get_models_range(path=path)
@@ -79,196 +84,319 @@ class CallbackState:
             path=path, sorted=True, num_models=num_models)
         starter_id = sorted_models[-1]  # h0o65m8s is nice
 
-        # filters
-        self.bridge_filter = biquad.lowpass(
-            sr=streamer.sample_rate, f=1, q=0.707)
-        self.out_hp = [biquad.highpass(
-            sr=streamer.sample_rate, f=out_hp_filter_freq, q=0.707) for _ in range(out_size)]
-        self.out_lp = [biquad.lowpass(
-            sr=streamer.sample_rate, f=out_lp_filter_freq, q=0.707) for _ in range(out_size)]
+        ### end of models init ###
+
+        ### start of filters init ###
+        self.bridge_dc_blocker = {'prev_in': 0, 'prev_out': 0}
+
+        # input bp filters
+        self.in_bp = [signal.butter(
+            2, [hp_filter_freq, lp_filter_freq], 'bandpass', fs=sample_rate, output='sos') for _ in range(in_size)]
+        self.in_bp_zi = [signal.sosfilt_zi(bp) for bp in self.in_bp]
+        # output bp filters (each model has its own set of filters)
+        self.out_bp, self.out_bp_zi = {}, {}
+        for _id in sorted_models:
+            self.out_bp[_id] = [signal.butter(
+                2, [hp_filter_freq, lp_filter_freq], 'bandpass', fs=sample_rate, output='sos') for _ in range(out_size)]
+            self.out_bp_zi[_id] = [signal.sosfilt_zi(
+                bp) for bp in self.out_bp[_id]]
 
         # envelope
         self.envelope_len = envelope_len
 
-        # variables for the callback
+        ### end of filters init ###
+
+        ### start of audio playback init ###
+        if self.play_audio:
+            def _audio_player(self):
+                # Pre-fill queue with silence to prevent initial underrun
+                # Stereo silence
+                silence = np.zeros(1024, dtype=np.float32).tobytes()
+                for _ in range(2):
+                    try:
+                        self.audio_queue.put_nowait(silence)
+                    except queue.Full:
+                        break
+                while True:
+                    try:
+                        audio_data = self.audio_queue.get(timeout=1)
+                        self.audio_stream.write(audio_data)
+                        queue_size = self.audio_queue.qsize()
+                        if queue_size == 0:
+                            print("Audio buffer underrun")
+                    except queue.Empty:
+                        print("Audio queue is empty, waiting for data...")
+                        continue
+
+            # latency!!! (increase if using bokeh plotter)
+            self.audio_queue = queue.Queue(maxsize=self.audio_queue_len)
+            self.audio_thread = threading.Thread(
+                target=_audio_player, daemon=True, args=(self,))
+            self.audio = pyaudio.PyAudio()
+            self.audio_stream = self.audio.open(format=pyaudio.paFloat32, channels=2, rate=int(
+                sample_rate), output=True, frames_per_buffer=1024)
+            self.audio_thread.start()
+        ### end of audio playback init ###
+
+        ### mssd threading ###
+        if self.mssd_enabled:
+            self.mssd_scales = [
+                {'window_size': 128, 'hop_length': 32},
+                {'window_size': 256, 'hop_length': 64},
+                {'window_size': 512, 'hop_length': 128},
+                {'window_size': 1024, 'hop_length': 1024}
+            ]
+            self.mssd = MultiScaleSpectralDiff(
+                sample_rate=sample_rate, scales=self.mssd_scales, enable_sonification=True)
+            self.mssd_thread = threading.Thread(
+                target=self.mssd._mssd_worker, daemon=True)
+            self.mssd_thread.start()
+            ### end of mssd threading ###
+
+        #### start of variables for the callback ###
         self.model = self.models[starter_id]
         self.gain = 4 * [1.0]
         self.change_model = 0
-        self.ratio_rising_threshold = init_ratio_rising_threshold
-        self.ratio_falling_threshold = init_ratio_falling_threshold
+        self.ratio_rising_threshold, self.ratio_falling_threshold = init_ratio_rising_threshold, init_ratio_falling_threshold
         self.iterations_in_this_model_counter = 0
         self.bridge_piezo_avg = deque(maxlen=num_blocks_to_compute_avg)
         self.model_out_std = deque(maxlen=num_blocks_to_compute_std)
         self.debug_counter = 0
         self.model_perm = [0, 1, 2, 3]
-
+        self.prev_model = self.models[starter_id]  # for crossfading
+        ### end of variables for the callback ###
 # sound_threshold =0.021
 
 
 async def callback(block, cs, streamer):
-
+    # start = time.perf_counter()
     with torch.no_grad():
-        _raw_data_tensor = torch.stack([torch.as_tensor(
-            buffer["buffer"]["data"], dtype=torch.float32) for buffer in block])  # num_features, 1024
-        # # split the data into seq_len to feed it into the model
-        inputs = _raw_data_tensor.unfold(1, cs.seq_len, cs.seq_len).permute(
-            1, 2, 0)  # n, seq_len, num_features
+        ref_timestamp = block[0]["buffer"]["ref_timestamp"]
 
-        # for each sequence of seq_len, feed it into the model
-        for _input in inputs:
-            cs.iterations_in_this_model_counter += 1
-            out = cs.model.forward_encoder(_input.to(cs.device)).squeeze().permute(
-                1, 0)  # num_outputs, seq_len
-            # outputs --> [ff_size_features, num_heads, num_layers, learning_rate]
+        ### start of input filtering ###
+        # filter input data -- no normalisation because it removes the relative differences between sensors
+        filtered_in = [[] for _ in range(cs.in_size)]
+        for idx, var in enumerate(block):
+            _in = var["buffer"]["data"]
+            filtered_in[idx], cs.in_bp_zi[idx] = signal.sosfilt(
+                cs.in_bp[idx], _in, zi=cs.in_bp_zi[idx])
+        ### end of input filtering ###
 
-            # -- normalisation --
-            # running normalisation (taking max and min from the current run)
-            if cs.running_norm:
-                cs.models_running_range[cs.model.id]["min"] = torch.stack(
-                    (cs.models_running_range[cs.model.id]["min"], out.min(dim=1).values), dim=0).min(dim=0).values
-                cs.models_running_range[cs.model.id]["max"] = torch.stack(
-                    (cs.models_running_range[cs.model.id]["max"], out.max(dim=1).values), dim=0).max(dim=0).values
+        ### start of model inference ###
+        data_tensor = torch.stack([torch.as_tensor(
+            filtered_in[idx], dtype=torch.float32) for idx in range(cs.in_size)])  # num_features, 1024
+        input = data_tensor.permute(1, 0)  # seq_len, num_features
+        # input = input.unsqueeze(0).to(cs.device)  # 1, seq_len, num_features
+        out = cs.model.forward_encoder(input.to(cs.device)).permute(
+            1, 0)  # num_outputs, seq_len
+        ### end of model inference ###
 
-                _min, _max = cs.models_running_range[cs.model.id]["min"], cs.models_running_range[cs.model.id]["max"]
+        # needed for crossfading
+        out_prev_model = None
+        if cs.iterations_in_this_model_counter == 0:
+            out_prev_model = cs.prev_model.forward_encoder(
+                input.to(cs.device)).permute(1, 0)
 
-            # absolute normalisation (taking max and min from passing the full dataset)
+        # outputs --> [ff_size, num_heads, num_layers, learning_rate]
+
+        ### start of output filtering ###
+        filtered_out = [[] for _ in range(cs.out_size)]
+        for idx in range(cs.out_size):
+            _out = out[idx].cpu().numpy().tolist()  # convert to list
+            if cs.seq_len != cs.model.comp_seq_len:  # interpolate if time compression model
+                _out = interpolate_signal(_out, cs.seq_len)
+            filtered_out[idx], cs.out_bp_zi[cs.model.id][idx] = signal.sosfilt(
+                cs.out_bp[cs.model.id][idx], _out, zi=cs.out_bp_zi[cs.model.id][idx])
+            # if this is the first iteration in this model, crossfade with previous model to avoid clicks
+            if out_prev_model is not None:
+                _out_prev = out_prev_model[idx].cpu().numpy().tolist()
+                _out_prev = interpolate_signal(_out_prev, cs.seq_len)
+                _filtered_out_prev, cs.out_bp_zi[cs.prev_model.id][idx] = signal.sosfilt(
+                    cs.out_bp[cs.prev_model.id][idx], _out_prev, zi=cs.out_bp_zi[cs.prev_model.id][idx])
+                fade_steps = np.linspace(0, 1, cs.seq_len)
+                filtered_out[idx] = np.array(
+                    filtered_out[idx]) * fade_steps + np.array(_filtered_out_prev) * (1 - fade_steps)
+        filtered_out = np.array(filtered_out)
+        ### end of output filtering ###
+
+        in_audio = data_tensor.sum(axis=0).numpy().astype(np.float32)  # in
+        out_audio = filtered_out.sum(axis=0).astype(np.float32)  # out
+
+        if cs.mssd_enabled:
+            try:
+                cs.mssd.mssd_queue.put_nowait((in_audio, out_audio))
+            except queue.Full:
+                print("MSSD queue is full, dropping audio data")
+                cs.mssd.mssd_queue.get_nowait()
+                cs.mssd.mssd_queue.put_nowait((in_audio, out_audio))
+
+        if cs.audio_stream:  # could spatialise
+            if cs.mssd_enabled:
+                mssd_audio = cs.mssd.latest_mssd_audio
+                mixed_audio = mssd_audio
             else:
-                _model_range = cs.full_dataset_models_range[cs.model.id]
-                _min, _max = torch.FloatTensor(_model_range["min"]).to(
-                    cs.device), torch.FloatTensor(_model_range["max"]).to(cs.device)
+                mixed_audio = out_audio
+            stereo_data = np.column_stack(
+                [mixed_audio, mixed_audio]).flatten().astype(np.float32)
+            try:
+                cs.audio_queue.put_nowait(stereo_data.tobytes())
+            except queue.Full:
+                print("Audio queue is full, dropping audio data")
+                cs.audio_queue.get_nowait()
+                cs.audio_queue.put_nowait(stereo_data.tobytes())
 
-            # -- normalise before sending to Bela!! --
-            normalised_out = (out - _min.unsqueeze(1)) / \
-                (_max - _min).unsqueeze(1)
+        if cs.plotter is not None:
+            # update spectrograms
+            if cs.mssd_enabled:
+                try:
+                    mssd_per_scale, _ = cs.mssd.mssd_results.get_nowait()
+                    cs.plotter.update_spectrograms(
+                        {"ref_timestamp": ref_timestamp, **mssd_per_scale})
+                except queue.Empty:
+                    pass
 
-            # permute output
-            if cs.permute_out:
-                normalised_out = normalised_out[cs.model_perm]
+            # update signals
+            plotter_signals_data = {"ref_timestamp": ref_timestamp,
+                                    **{f"gFaabSensor_{i+1}": filtered_in[i] for i in range(cs.in_size)},
+                                    **{f"out_{i+1}": filtered_out[i] for i in range(cs.out_size)}, **{f"mssd_audio": mixed_audio}
+                                    }
+            cs.plotter.update_signal_data(
+                plotter_signals_data, signal_data_len=cs.seq_len)
 
-            # send each feature to Bela
-            for idx, feature in enumerate(normalised_out):
+        # permute output
+        if cs.permute_out:
+            filtered_out = filtered_out[cs.model_perm]
 
-                y = feature.detach().cpu()
+        # # send each feature to Bela or OSC
+        for idx in range(cs.out_size):
+            if cs.osc_client:
+                cs.osc_client.send_message(
+                    f'/f{idx+1}', filtered_out[f"out_{idx}"])
+            if cs.out2Bela:
+                streamer.send_buffer(idx, 'f', cs.seq_len,
+                                     filtered_out[f"out_{idx}"])
 
-                # dc filter
-                y = cs.out_hp[idx](y)
-                y = cs.out_lp[idx](y)
+        bridge_piezo = dc_block(
+            block[5]["buffer"]["data"], cs.bridge_dc_blocker)
 
-                if cs.seq_len != cs.model.comp_seq_len:
-                    original_indices = np.linspace(
-                        0, 1, num=cs.model.comp_seq_len)
-                    new_indices = np.linspace(0, 1, num=cs.seq_len)
-                    cubic_interpolator = interp1d(
-                        original_indices, y, kind='cubic', axis=0)
-                    y = cubic_interpolator(new_indices)
+        ratio = calc_ratio_amplitude_variance(
+            filtered_out, bridge_piezo, cs)
 
-                # envelope # TODO
-                # filtered__out =
+        # -- model change --
+        past_change_model = cs.change_model
 
-                _out = y.tolist()
+        # leaky threshold
+        if cs.iterations_in_this_model_counter % cs.num_of_iterations_in_this_model_check == 0:
+            cs.ratio_rising_threshold -= cs.threshold_leak
+            cs.ratio_falling_threshold += cs.threshold_leak
 
-                if cs.osc_client:
-                    cs.osc_client.send_message(f'/f{idx+1}', _out)
-                else:
-                    streamer.send_buffer(idx, 'f', cs.seq_len, _out)
+        cs.iterations_in_this_model_counter += 1
+        # is it time to change model?
+        if (ratio > cs.ratio_rising_threshold and past_change_model == 0):
+            cs.change_model = 1
+        elif (ratio < cs.ratio_falling_threshold and past_change_model == 1):
+            cs.change_model = 0
 
-            # -- amplitude --
-            _bridge_piezo = cs.bridge_filter(block[5]["buffer"]["data"])
-            cs.bridge_piezo_avg.append(np.average(_bridge_piezo))
-            weighted_avg_bridge_piezo = np.average(
-                cs.bridge_piezo_avg, weights=range(1, len(cs.bridge_piezo_avg)+1))
+        cs.debug_counter += 1  # for debugging
 
-            # -- model variance --
-            cs.model_out_std.append(normalised_out.std(dim=1).mean().item())
-            weighted_model_out_std = np.average(
-                cs.model_out_std, weights=range(1, len(cs.model_out_std)+1))
+        # if it's time to change model...
+        if (past_change_model == 0 and cs.change_model == 1):
+            change_model(filtered_out, cs)
 
-            # -- model change --
-            past_change_model = cs.change_model
+            # #  debug audio callback diagnostics
+            # if cs.debug_counter % 50 == 0:
+            #     elapsed = time.perf_counter() - start
 
-            # leaky threshold
-            if cs.iterations_in_this_model_counter % cs.num_of_iterations_in_this_model_check == 0:
-                cs.ratio_rising_threshold -= cs.threshold_leak
-                cs.ratio_falling_threshold += cs.threshold_leak
+            #     target = 1024 / (cs.sample_rate)  # Your block period
+            #     utilization = (elapsed / target) * 100
+            #     print(f"Callback: {elapsed*1000:.1f}ms ({utilization:.1f}% CPU)")
+            #     # Check system memory
+            #     ram_percent = psutil.virtual_memory().percent
 
-            # is it time to change model?
-            ratio = weighted_model_out_std / weighted_avg_bridge_piezo
-            if (ratio > cs.ratio_rising_threshold and past_change_model == 0):
-                cs.change_model = 1
-            elif (ratio < cs.ratio_falling_threshold and past_change_model == 1):
-                cs.change_model = 0
+            #     # Check GPU memory if using CUDA
+            #     if torch.cuda.is_available():
+            #         gpu_memory = torch.cuda.memory_allocated() / 1024**2  # MB
+            #         print(
+            #             f"RAM: {ram_percent}%, GPU: {gpu_memory:.1f}MB, Queue: {cs.audio_queue.qsize()}")
 
-            cs.debug_counter += 1  # for debugging
-            if (cs.debug_counter % 20 == 0):
-                print(ratio)
-
-            # if it's time to change model...
-            if (past_change_model == 0 and cs.change_model == 1):
-                past_model = cs.model.id
-                # high sound amplitude and model has low variance --> change model
-                # streamer.send_buffer(
-                #     trigger_idx, 'f', seq_len, trigger_width*[1.0] + (seq_len-trigger_width)*[0.0])  # change trigger
-
-                out_coordinates = normalised_out[:, -1].detach().cpu().tolist()
-                out_coordinates = [c * g for c,
-                                   g in zip(out_coordinates, cs.gain)]
-
-                # find the closest model to the out_ coordinates
-                closest_model, _ = find_closest_model(
-                    out_coordinates, cs.models_coordinates)
-                cs.model = cs.models[closest_model]
-                if cs.permute_out and past_model == cs.model.id:
-                    cs.model_perm = torch.randperm(4)
-
-                # reset counter and thresholds
-                cs.iterations_in_this_model_counter = 0
-                cs.ratio_rising_threshold, cs.ratio_falling_threshold = cs.init_ratio_rising_threshold, cs.init_ratio_falling_threshold
-
-                print(cs.model.id, np.round(out_coordinates, 4))
-
-            else:
-                pass
-                # streamer.send_buffer(
-                #     trigger_idx, 'f', seq_len, seq_len*[0.0])  # change trigger
+            #     # Check audio queue size
+            #     print(f"Audio queue size: {cs.audio_queue.qsize()}")
 
 if __name__ == "__main__":
+    in_vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',
+               'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
+
+    out_vars = ['out_1', 'out_2', 'out_3', 'out_4']
+
+    spec_vars = ["mssd_scale_0_128", "mssd_scale_1_256",
+                 "mssd_scale_2_512", "mssd_scale_3_1024"]
 
     parser = argparse.ArgumentParser(description="faab-callback")
     parser.add_argument('--osc', action='store_true', help='Use OSC server')
+    parser.add_argument('--plot', action='store_true',
+                        help='Enable Bokeh plotting')
+    parser.add_argument('--out2Bela', action='store_true',
+                        help='Send output to Bela')
+    parser.add_argument('--audio', action='store_true',
+                        help="Play model output as audio")
+    parser.add_argument('--mssd', action='store_true',
+                        help="Enable MSSD processing")
     args = parser.parse_args()
+
     if args.osc:
         osc_ip, osc_port = "127.0.0.1", 2222
     else:
         osc_ip, osc_port = None, None
 
-    streamer = Streamer()
+    streamer = Streamer(ip="192.168.0.199")
     streamer.connect()
-    vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',
-            'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
+
+    sample_rate = streamer.sample_rate / 2  # analog rate is half audio rate
+
+    plotter = None
+    if args.plot:
+        plotter = Plotter(
+            signal_vars=[*in_vars, *out_vars, "mssd_audio"],
+            spectrogram_vars=spec_vars,
+            rollover_blocks=3,
+            plot_update_delay=50,
+            sample_rate=sample_rate,
+            port=5007,
+            enable_spectrograms=True,
+            max_freq_spectrogram=2000,
+        )
+        plotter.start_server()
 
     cs = CallbackState(
         seq_len=1024,
         num_models=20,
+        in_size=8,
         out_size=4,
+        sample_rate=sample_rate,
         num_blocks_to_compute_avg=10,
         num_blocks_to_compute_std=40,
-        out_hp_filter_freq=10,
-        out_lp_filter_freq=5000,
+        hp_filter_freq=1,
+        lp_filter_freq=5000,
         envelope_len=256,
-        num_of_iterations_in_this_model_check=100,
-        init_ratio_rising_threshold=2.5,
-        init_ratio_falling_threshold=1.3,
-        threshold_leak=0.01,
+        num_of_iterations_in_this_model_check=10,
+        init_ratio_rising_threshold=30,
+        init_ratio_falling_threshold=10,
+        threshold_leak=1,
         trigger_width=25,
         trigger_idx=4,
         running_norm=True,
         permute_out=False,
         path="src/models/trained/transformer-autoencoder-timecomp-jan",
         osc_ip=osc_ip,
-        osc_port=osc_port
+        osc_port=osc_port,
+        plotter=plotter,
+        out2Bela=args.out2Bela,
+        play_audio=args.audio,
+        audio_queue_len=2,  # 10 if using bokeh
+        mssd_enabled=args.mssd
     )
 
     streamer.start_streaming(
-        vars, on_block_callback=callback, callback_args=(cs, streamer))
+        in_vars, on_block_callback=callback, callback_args=(cs, streamer))
 
     streamer.wait(0)
