@@ -9,7 +9,7 @@ from bokeh.models.widgets import Panel, Tabs
 from bokeh.models import Legend
 from bokeh.embed import file_html
 from bokeh.resources import CDN
-from models import TransformerAutoencoder
+from models import TransformerAutoencoder, TransformerTimeAutoencoder
 from scipy import interpolate
 
 # -- train loop --
@@ -202,13 +202,22 @@ def load_train_loss(_id, epochs=500, path='src/models/trained'):
     return json.load(open(f'{path}/transformer_run_{_id}_{epochs}_metrics.json'))["train_loss"]
 
 
-def load_model(_id, path='src/models/trained'):
+def load_model(_id, type, path='src/models/trained'):
 
     id_ep = json.load(open(f'{path}/id_ep.json'))
     epochs = id_ep[_id]
     config = load_config(_id, epochs, path)
-    model = TransformerAutoencoder(comp_feat_len=config["comp_feat_len"], comp_seq_len=config["comp_seq_len"], feat_len=config["feat_len"], num_heads=config["num_heads"], ff_size_features=config["ff_size_features"], ff_size_time=config["ff_size_time"],
-                                   dropout=config["dropout"], num_layers=config["num_layers"], seq_len=config["seq_len"], pe_scale_factor=config["pe_scale_factor"], mask=config["mask"], id=_id)
+    if type == "timecomp":
+        model = TransformerTimeAutoencoder(comp_feat_len=config["comp_feat_len"], comp_seq_len=config["comp_seq_len"], feat_len=config["feat_len"], num_heads=config["num_heads"], ff_size_features=config["ff_size_features"], ff_size_time=config["ff_size_time"],
+                                           dropout=config["dropout"], num_layers=config["num_layers"], seq_len=config["seq_len"], pe_scale_factor=config["pe_scale_factor"], mask=config["mask"], id=_id)
+    if type == "timelin":
+        model = TransformerAutoencoder(d_model=config["d_model"], feat_in_size=config["feat_in_size"], num_heads=config["num_heads"], ff_size=config["ff_size"],
+                                       dropout=config["dropout"], num_layers=config["num_layers"], max_len=config["seq_len"], pe_scale_factor=config["pe_scale_factor"], mask=config["mask"], id=_id)
+
+    if type not in ["timecomp", "timelin"]:
+        raise ValueError(
+            f"Unknown model type: {type}. Use 'timecomp' or 'timelin'.")
+
     model.load_state_dict(torch.load(
         f'{path}/transformer_run_{_id}_{epochs}.model', map_location=get_device()))
     model = model.to(get_device())

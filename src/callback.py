@@ -17,9 +17,9 @@ from utils.mssd import MultiScaleSpectralDiff
 
 
 class CallbackState:
-    def __init__(self, seq_len, num_models, in_size, out_size, sample_rate, num_blocks_to_compute_avg, num_blocks_to_compute_std, hp_filter_freq, lp_filter_freq, envelope_len, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, path, osc_ip=None, osc_port=None, plotter=None, out2Bela=False, play_audio=False, audio_queue_len=10, mssd_enabled=False):
+    def __init__(self, seq_len, num_models, in_size, out_size, sample_rate, num_blocks_to_compute_avg, num_blocks_to_compute_std, hp_filter_freq, lp_filter_freq, envelope_len, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, osc_ip=None, osc_port=None, plotter=None, out2Bela=False, play_audio=False, audio_queue_len=10, mssd_enabled=False, model_type="timelin"):
 
-        ### start of params ###
+        ### ----------------- start of params definitions ###
         self.seq_len = seq_len
         self.num_models = num_models
         self.in_size = in_size
@@ -35,31 +35,40 @@ class CallbackState:
         self.running_norm = running_norm
         self.permute_out = permute_out
         self.device = get_device()
-        self.path = path
         self.osc_ip, self.osc_port, self.osc_client = osc_ip, osc_port, None
         self.plotter = plotter
         self.out2Bela = out2Bela
         self.play_audio = play_audio
         self.audio_queue_len = audio_queue_len
         self.mssd_enabled = mssd_enabled
-        ### end of params ###
+        self.model_type = model_type
+        # self.path = path
+        ### ----------------- end of params definitions ###
 
         print(f"Using device: {self.device}")
+        print(f"Model type: {self.model_type}")
         print(f"\nAudio enabled: {self.play_audio}\nOSC enabled: {self.osc_ip is not None}\nPlotting enabled: {self.plotter is not None}\nMSSD enabled: {self.mssd_enabled}\n ")
 
         # init osc server
         if self.osc_ip and self.osc_port:
             self.osc_client = SimpleUDPClient(self.osc_ip, self.osc_port)
 
-        ### start of models init ###
+        ### ----------------- start of models init ###
 
         # preload models
         # models in desc order of train loss, take best 20
+        if self.model_type == "timelin":
+            path = "src/models/trained/transformer-autoencoder-jan"
+        elif self.model_type == "timecomp":
+            path = "src/models/trained/transformer-autoencoder-timecomp-jan"
+        else:
+            raise ValueError(
+                f"Unknown model type: {self.model_type}. Use 'timelin' or 'timecomp'.")
         sorted_models = get_sorted_models(path=path, num_models=num_models)
         self.models = {}
         self.models_running_range = {}
         for _id in sorted_models:
-            self.models[_id] = load_model(_id, path=path)
+            self.models[_id] = load_model(_id, self.model_type, path=path)
             self.models_running_range[_id] = {"min": torch.FloatTensor([0, 0, 0, 0]).to(
                 self.device), "max": torch.FloatTensor([0, 0, 0, 0]).to(self.device)}
 
@@ -84,9 +93,9 @@ class CallbackState:
             path=path, sorted=True, num_models=num_models)
         starter_id = sorted_models[-1]  # h0o65m8s is nice
 
-        ### end of models init ###
+        ### ----------------- end of models init ###
 
-        ### start of filters init ###
+        ### ----------------- start of filters init ###
         self.bridge_dc_blocker = {'prev_in': 0, 'prev_out': 0}
 
         # input bp filters
@@ -104,9 +113,9 @@ class CallbackState:
         # envelope
         self.envelope_len = envelope_len
 
-        ### end of filters init ###
+        ### ----------------- end of filters init ###
 
-        ### start of audio playback init ###
+        ### ----------------- start of audio playback init ###
         if self.play_audio:
             def _audio_player(self):
                 # Pre-fill queue with silence to prevent initial underrun
@@ -136,7 +145,7 @@ class CallbackState:
             self.audio_stream = self.audio.open(format=pyaudio.paFloat32, channels=2, rate=int(
                 sample_rate), output=True, frames_per_buffer=1024)
             self.audio_thread.start()
-        ### end of audio playback init ###
+        ### ----------------- end of audio playback init ###
 
         ### mssd threading ###
         if self.mssd_enabled:
@@ -151,9 +160,9 @@ class CallbackState:
             self.mssd_thread = threading.Thread(
                 target=self.mssd._mssd_worker, daemon=True)
             self.mssd_thread.start()
-            ### end of mssd threading ###
+            ### ----------------- end of mssd threading ###
 
-        #### start of variables for the callback ###
+        #### ----------------- start of variables for the callback ###
         self.model = self.models[starter_id]
         self.gain = 4 * [1.0]
         self.change_model = 0
@@ -164,7 +173,7 @@ class CallbackState:
         self.debug_counter = 0
         self.model_perm = [0, 1, 2, 3]
         self.prev_model = self.models[starter_id]  # for crossfading
-        ### end of variables for the callback ###
+        ### ----------------- end of variables for the callback ###
 # sound_threshold =0.021
 
 
@@ -173,23 +182,23 @@ async def callback(block, cs, streamer):
     with torch.no_grad():
         ref_timestamp = block[0]["buffer"]["ref_timestamp"]
 
-        ### start of input filtering ###
+        ### ----------------- start of input filtering ###
         # filter input data -- no normalisation because it removes the relative differences between sensors
         filtered_in = [[] for _ in range(cs.in_size)]
         for idx, var in enumerate(block):
             _in = var["buffer"]["data"]
             filtered_in[idx], cs.in_bp_zi[idx] = signal.sosfilt(
                 cs.in_bp[idx], _in, zi=cs.in_bp_zi[idx])
-        ### end of input filtering ###
+        ### ----------------- end of input filtering ###
 
-        ### start of model inference ###
+        ### ----------------- start of model inference ###
         data_tensor = torch.stack([torch.as_tensor(
             filtered_in[idx], dtype=torch.float32) for idx in range(cs.in_size)])  # num_features, 1024
         input = data_tensor.permute(1, 0)  # seq_len, num_features
         # input = input.unsqueeze(0).to(cs.device)  # 1, seq_len, num_features
         out = cs.model.forward_encoder(input.to(cs.device)).permute(
             1, 0)  # num_outputs, seq_len
-        ### end of model inference ###
+        ### ----------------- end of model inference ###
 
         # needed for crossfading
         out_prev_model = None
@@ -199,11 +208,11 @@ async def callback(block, cs, streamer):
 
         # outputs --> [ff_size, num_heads, num_layers, learning_rate]
 
-        ### start of output filtering ###
+        ### ----------------- start of output filtering ###
         filtered_out = [[] for _ in range(cs.out_size)]
         for idx in range(cs.out_size):
             _out = out[idx].cpu().numpy().tolist()  # convert to list
-            if cs.seq_len != cs.model.comp_seq_len:  # interpolate if time compression model
+            if cs.model_type == "timecomp" and cs.seq_len != cs.model.comp_seq_len:  # interpolate if time compression model
                 _out = interpolate_signal(_out, cs.seq_len)
             filtered_out[idx], cs.out_bp_zi[cs.model.id][idx] = signal.sosfilt(
                 cs.out_bp[cs.model.id][idx], _out, zi=cs.out_bp_zi[cs.model.id][idx])
@@ -217,7 +226,7 @@ async def callback(block, cs, streamer):
                 filtered_out[idx] = np.array(
                     filtered_out[idx]) * fade_steps + np.array(_filtered_out_prev) * (1 - fade_steps)
         filtered_out = np.array(filtered_out)
-        ### end of output filtering ###
+        ### ----------------- end of output filtering ###
 
         in_audio = data_tensor.sum(axis=0).numpy().astype(np.float32)  # in
         out_audio = filtered_out.sum(axis=0).astype(np.float32)  # out
@@ -341,6 +350,8 @@ if __name__ == "__main__":
                         help="Play model output as audio")
     parser.add_argument('--mssd', action='store_true',
                         help="Enable MSSD processing")
+    parser.add_argument('--model_type', type=str, choices=['timelin', 'timecomp'], default='timelin',
+                        help="Type of model to use: 'timelin' for TransformerAutoencoder or 'timecomp' for TransformerTimeAutoencoder")
     args = parser.parse_args()
 
     if args.osc:
@@ -386,14 +397,15 @@ if __name__ == "__main__":
         trigger_idx=4,
         running_norm=True,
         permute_out=False,
-        path="src/models/trained/transformer-autoencoder-timecomp-jan",
+        # path="src/models/trained/transformer-autoencoder-jan",
         osc_ip=osc_ip,
         osc_port=osc_port,
         plotter=plotter,
         out2Bela=args.out2Bela,
         play_audio=args.audio,
         audio_queue_len=2,  # 10 if using bokeh
-        mssd_enabled=args.mssd
+        mssd_enabled=args.mssd,
+        model_type=args.model_type
     )
 
     streamer.start_streaming(
