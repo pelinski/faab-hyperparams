@@ -17,7 +17,7 @@ from utils.mssd import MultiScaleSpectralDiff
 
 
 class CallbackState:
-    def __init__(self, seq_len, num_models, in_size, out_size, sample_rate, num_blocks_to_compute_avg, num_blocks_to_compute_std, hp_filter_freq, lp_filter_freq, envelope_len, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, running_norm, permute_out, osc_ip=None, osc_port=None, plotter=None, out2Bela=False, play_audio=False, audio_queue_len=10, mssd_enabled=False, model_type="timelin"):
+    def __init__(self, seq_len, num_models, in_size, out_size, sample_rate, num_blocks_to_compute_avg, num_blocks_to_compute_std, hp_filter_freq, lp_filter_freq, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, osc_ip=None, osc_port=None, plotting_enabled=False, out2Bela=False, play_audio=False, audio_queue_len=10, mssd_enabled=False, model_type="timelin"):
 
         ### ----------------- start of params definitions ###
         self.seq_len = seq_len
@@ -27,32 +27,57 @@ class CallbackState:
         self.sample_rate = sample_rate
         self.num_blocks_to_compute_avg, self.num_blocks_to_compute_std = num_blocks_to_compute_avg, num_blocks_to_compute_std
         self.hp_filter_freq, self.lp_filter_freq = hp_filter_freq, lp_filter_freq
-        self.envelope_len = envelope_len  # for envelopes when changing model
         self.num_of_iterations_in_this_model_check = num_of_iterations_in_this_model_check
         self.init_ratio_rising_threshold, self.init_ratio_falling_threshold = init_ratio_rising_threshold, init_ratio_falling_threshold
         self.threshold_leak, self.trigger_width = threshold_leak, trigger_width
         self.trigger_idx = trigger_idx
-        self.running_norm = running_norm
-        self.permute_out = permute_out
+        # self.running_norm = running_norm
+        # self.permute_out = permute_out
         self.device = get_device()
         self.osc_ip, self.osc_port, self.osc_client = osc_ip, osc_port, None
-        self.plotter = plotter
         self.out2Bela = out2Bela
         self.play_audio = play_audio
         self.audio_queue_len = audio_queue_len
         self.mssd_enabled = mssd_enabled
         self.model_type = model_type
+        self.plotting_enabled = plotting_enabled
         # self.path = path
         ### ----------------- end of params definitions ###
 
         print(f"Using device: {self.device}")
         print(f"Model type: {self.model_type}")
-        print(f"\nAudio enabled: {self.play_audio}\nOSC enabled: {self.osc_ip is not None}\nPlotting enabled: {self.plotter is not None}\nMSSD enabled: {self.mssd_enabled}\n ")
+        print(
+            f"\nAudio enabled: {self.play_audio}\nOSC enabled: {self.osc_ip is not None}\nPlotting enabled: {self.plotting_enabled}\nMSSD enabled: {self.mssd_enabled}\n ")
 
         # init osc server
         if self.osc_ip and self.osc_port:
             self.osc_client = SimpleUDPClient(self.osc_ip, self.osc_port)
 
+        # init bokeh plotter
+        if plotting_enabled:
+
+            in_vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',
+                       'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
+
+            out_vars = ['out_1', 'out_2', 'out_3', 'out_4']
+
+            spec_vars = ["mssd_scale_0_128", "mssd_scale_1_256",
+                         "mssd_scale_2_512", "mssd_scale_3_1024"] if self.mssd_enabled else []
+
+            self.plotter = Plotter(
+                signal_vars=[
+                    *in_vars, *out_vars, "mssd_audio"] if self.mssd_enabled else [*in_vars, *out_vars],
+                spectrogram_vars=spec_vars,
+                rollover_blocks=3,
+                plot_update_delay=50,
+                sample_rate=sample_rate,
+                port=5007,
+                enable_spectrograms=True,
+                max_freq_spectrogram=2000,
+            )
+            self.plotter.start_server()
+        else:
+            self.plotter = None
         ### ----------------- start of models init ###
 
         # preload models
@@ -109,9 +134,6 @@ class CallbackState:
                 2, [hp_filter_freq, lp_filter_freq], 'bandpass', fs=sample_rate, output='sos') for _ in range(out_size)]
             self.out_bp_zi[_id] = [signal.sosfilt_zi(
                 bp) for bp in self.out_bp[_id]]
-
-        # envelope
-        self.envelope_len = envelope_len
 
         ### ----------------- end of filters init ###
 
@@ -272,9 +294,9 @@ async def callback(block, cs, streamer):
             cs.plotter.update_signal_data(
                 plotter_signals_data, signal_data_len=cs.seq_len)
 
-        # permute output
-        if cs.permute_out:
-            filtered_out = filtered_out[cs.model_perm]
+        # # permute output
+        # if cs.permute_out:
+        #     filtered_out = filtered_out[cs.model_perm]
 
         # # send each feature to Bela or OSC
         for idx in range(cs.out_size):
@@ -332,24 +354,16 @@ async def callback(block, cs, streamer):
             #     print(f"Audio queue size: {cs.audio_queue.qsize()}")
 
 if __name__ == "__main__":
-    in_vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',
-               'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
-
-    out_vars = ['out_1', 'out_2', 'out_3', 'out_4']
-
-    spec_vars = ["mssd_scale_0_128", "mssd_scale_1_256",
-                 "mssd_scale_2_512", "mssd_scale_3_1024"]
-
     parser = argparse.ArgumentParser(description="faab-callback")
     parser.add_argument('--osc', action='store_true', help='Use OSC server')
     parser.add_argument('--plot', action='store_true',
-                        help='Enable Bokeh plotting')
+                        help='Enable Bokeh plotting', default=False)
     parser.add_argument('--out2Bela', action='store_true',
-                        help='Send output to Bela')
+                        help='Send output to Bela', default=False)
     parser.add_argument('--audio', action='store_true',
-                        help="Play model output as audio")
+                        help="Play model output as audio", default=True)
     parser.add_argument('--mssd', action='store_true',
-                        help="Enable MSSD processing")
+                        help="Enable MSSD processing", default=False)
     parser.add_argument('--model_type', type=str, choices=['timelin', 'timecomp'], default='timelin',
                         help="Type of model to use: 'timelin' for TransformerAutoencoder or 'timecomp' for TransformerTimeAutoencoder")
     args = parser.parse_args()
@@ -364,50 +378,42 @@ if __name__ == "__main__":
 
     sample_rate = streamer.sample_rate / 2  # analog rate is half audio rate
 
-    plotter = None
-    if args.plot:
-        plotter = Plotter(
-            signal_vars=[*in_vars, *out_vars, "mssd_audio"],
-            spectrogram_vars=spec_vars,
-            rollover_blocks=3,
-            plot_update_delay=50,
-            sample_rate=sample_rate,
-            port=5007,
-            enable_spectrograms=True,
-            max_freq_spectrogram=2000,
-        )
-        plotter.start_server()
-
     cs = CallbackState(
-        seq_len=1024,
-        num_models=20,
-        in_size=8,
-        out_size=4,
-        sample_rate=sample_rate,
+        seq_len=1024,  # 1024 samples per block of data received from Bela, also seq_len for the model
+        num_models=20,  # number of models to use
+        in_size=8,  # number of input variables
+        out_size=4,  # number of output variables
+        sample_rate=sample_rate,  # Bela sample rate and sample rate we use in Python
+        # number of blocks to compute average amplitude for the bridge piezo
         num_blocks_to_compute_avg=10,
-        num_blocks_to_compute_std=40,
+        # number of blocks to compute standard deviation for the model output
+        num_blocks_to_compute_std=10,
+        # high-pass filter frequency for model input and output. 1Hz to remove DC offset
         hp_filter_freq=1,
-        lp_filter_freq=5000,
-        envelope_len=256,
+        lp_filter_freq=5000,  # low-pass filter frequency for model input and output
+        # min number of model iterations (forward-passes of blocks of seq_len) before checking if model should change
         num_of_iterations_in_this_model_check=10,
+        # initial ratio (avg amplitude / std) schmidt trigger rising threshold for model change
         init_ratio_rising_threshold=30,
+        # initial ratio (avg amplitude / std) schmidt trigger falling threshold for model change
         init_ratio_falling_threshold=10,
-        threshold_leak=1,
-        trigger_width=25,
-        trigger_idx=4,
-        running_norm=True,
-        permute_out=False,
-        # path="src/models/trained/transformer-autoencoder-jan",
-        osc_ip=osc_ip,
-        osc_port=osc_port,
-        plotter=plotter,
+        threshold_leak=1,  # amount to leak the threshold over time
+        trigger_width=25,  # width of the trigger in samples
+        trigger_idx=4,  # index of the trigger output
+        osc_ip=osc_ip,  # OSC server IP
+        osc_port=osc_port,  # OSC server port
+        plotting_enabled=args.plot,  # enable Bokeh plotting
         out2Bela=args.out2Bela,
         play_audio=args.audio,
-        audio_queue_len=2,  # 10 if using bokeh
+        audio_queue_len=10 if args.plot else 2,  # 10 if using bokeh
         mssd_enabled=args.mssd,
         model_type=args.model_type
+        # running_norm=True,  # whether to use running normalization
+        # permute_out=False, # permute model output dimensions
+        # path="src/models/trained/transformer-autoencoder-jan",
     )
-
+    in_vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',
+               'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']
     streamer.start_streaming(
         in_vars, on_block_callback=callback, callback_args=(cs, streamer))
 

@@ -387,8 +387,8 @@ def change_model(out, cs):
     closest_model, _ = find_closest_model(
         out_coordinates, cs.models_coordinates, exclude=cs.model.id)
     cs.model = cs.models[closest_model]
-    if cs.permute_out:
-        cs.model_perm = torch.randperm(4)
+    # if cs.permute_out:
+    #     cs.model_perm = torch.randperm(4)
 
     # reset counter and thresholds
     cs.iterations_in_this_model_counter = 0
