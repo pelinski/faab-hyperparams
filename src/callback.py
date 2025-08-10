@@ -373,7 +373,8 @@ if __name__ == "__main__":
     else:
         osc_ip, osc_port = None, None
 
-    streamer = Streamer(ip="192.168.0.199")
+    # streamer = Streamer(ip="192.168.0.199")
+    streamer = Streamer()
     streamer.connect()
 
     sample_rate = streamer.sample_rate / 2  # analog rate is half audio rate
