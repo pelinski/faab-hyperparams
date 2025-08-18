@@ -6,7 +6,7 @@ early_terminate:
   type: hyperband
   min_iter: 30
   eta: 3
-  max_iter: 120
+  max_iter: 80
 parameters:
   batch_size:
     values: [32, 64]
