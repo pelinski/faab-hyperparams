@@ -22,7 +22,7 @@ mask: False
 # training parameters
 max_grad_norm: 0
 dropout: 0
-epochs: 150
+epochs: 80
 optimizer: "rmsprop"
 criterion: "weighted_mse"
 learning_rate: 0.0001
