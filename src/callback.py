@@ -11,13 +11,14 @@ from pythonosc.udp_client import SimpleUDPClient
 from utils.utils import load_model, get_device, get_sorted_models, get_models_coordinates, get_models_range, calc_ratio_amplitude_variance, change_model, dc_block, interpolate_signal
 from utils.bokeh import Plotter
 from utils.mssd import MultiScaleSpectralDiff
+from scipy.ndimage import gaussian_filter1d
 
 # import time
 # import psutil
 
 
 class CallbackState:
-    def __init__(self, seq_len, num_models, in_size, out_size, sample_rate, num_blocks_to_compute_avg, num_blocks_to_compute_std, hp_filter_freq, lp_filter_freq, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, trigger_width, trigger_idx, osc_ip=None, osc_port=None, plotting_enabled=False, out2Bela=False, play_audio=False, audio_queue_len=10, mssd_enabled=False, model_type="timelin"):
+    def __init__(self, seq_len, num_models, in_size, out_size, sample_rate, num_blocks_to_compute_avg, num_blocks_to_compute_std, hp_filter_freq, lp_filter_freq, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, osc_ip=None, osc_port=None, plotting_enabled=False, out2Bela=False, play_audio=False, audio_queue_len=10, mssd_enabled=False, model_type="timelin", mssd_moving_avg_win_sz=32, permute_out=False):
 
         ### ----------------- start of params definitions ###
         self.seq_len = seq_len
@@ -29,10 +30,9 @@ class CallbackState:
         self.hp_filter_freq, self.lp_filter_freq = hp_filter_freq, lp_filter_freq
         self.num_of_iterations_in_this_model_check = num_of_iterations_in_this_model_check
         self.init_ratio_rising_threshold, self.init_ratio_falling_threshold = init_ratio_rising_threshold, init_ratio_falling_threshold
-        self.threshold_leak, self.trigger_width = threshold_leak, trigger_width
-        self.trigger_idx = trigger_idx
+        self.threshold_leak = threshold_leak
         # self.running_norm = running_norm
-        # self.permute_out = permute_out
+        self.permute_out = permute_out
         self.device = get_device()
         self.osc_ip, self.osc_port, self.osc_client = osc_ip, osc_port, None
         self.out2Bela = out2Bela
@@ -41,6 +41,7 @@ class CallbackState:
         self.mssd_enabled = mssd_enabled
         self.model_type = model_type
         self.plotting_enabled = plotting_enabled
+        self.mssd_moving_avg_win_sz = mssd_moving_avg_win_sz
         # self.path = path
         ### ----------------- end of params definitions ###
 
@@ -110,6 +111,8 @@ class CallbackState:
 
         print("Model warmup complete")
 
+        # TODO add filter warmup
+
         # model space
         # min and max of model outputs (after passing the full dataset)
         self.full_dataset_models_range = get_models_range(path=path)
@@ -117,6 +120,8 @@ class CallbackState:
         self.models_coordinates = get_models_coordinates(
             path=path, sorted=True, num_models=num_models)
         starter_id = sorted_models[-1]  # h0o65m8s is nice
+        self.model_distance_bias = {
+            model_id: 0.0 for model_id in sorted_models}
 
         ### ----------------- end of models init ###
 
@@ -134,6 +139,21 @@ class CallbackState:
                 2, [hp_filter_freq, lp_filter_freq], 'bandpass', fs=sample_rate, output='sos') for _ in range(out_size)]
             self.out_bp_zi[_id] = [signal.sosfilt_zi(
                 bp) for bp in self.out_bp[_id]]
+
+        # warm up filters # FIXME
+        # phase = 0.0  # starting phase for sinusoidal input
+        # for idx in range(5):
+        #     for _id in sorted_models:
+        #         for idx in range(out_size):
+        #             # Create dummy input with same shape as real data
+        #             # dummy sinusoidal input
+        #             # 1Hz sine wave, seq_len samples long
+        #             dummy_input = np.sin(
+        #                 2 * np.pi * 1 * np.linspace(0, self.seq_len / sample_rate, self.seq_len) + phase)
+        #             _, self.out_bp_zi[_id][idx] = signal.sosfilt(
+        #                 self.out_bp[_id][idx], dummy_input, zi = self.out_bp_zi[_id][idx])
+        #     phase += 2 * np.pi * 1 * self.seq_len /
+        #         sample_rate  # increment phase after 1024 samples
 
         ### ----------------- end of filters init ###
 
@@ -178,7 +198,7 @@ class CallbackState:
                 {'window_size': 1024, 'hop_length': 1024}
             ]
             self.mssd = MultiScaleSpectralDiff(
-                sample_rate=sample_rate, scales=self.mssd_scales, enable_sonification=True)
+                sample_rate=sample_rate, scales=self.mssd_scales, enable_sonification=True, moving_average_window_size=self.mssd_moving_avg_win_sz)
             self.mssd_thread = threading.Thread(
                 target=self.mssd._mssd_worker, daemon=True)
             self.mssd_thread.start()
@@ -224,7 +244,8 @@ async def callback(block, cs, streamer):
 
         # needed for crossfading
         out_prev_model = None
-        if cs.iterations_in_this_model_counter == 0:
+        n_iter_for_crossfade = 20
+        if cs.iterations_in_this_model_counter <= n_iter_for_crossfade:  # crossfade for first 5 iterations
             out_prev_model = cs.prev_model.forward_encoder(
                 input.to(cs.device)).permute(1, 0)
 
@@ -244,11 +265,29 @@ async def callback(block, cs, streamer):
                 _out_prev = interpolate_signal(_out_prev, cs.seq_len)
                 _filtered_out_prev, cs.out_bp_zi[cs.prev_model.id][idx] = signal.sosfilt(
                     cs.out_bp[cs.prev_model.id][idx], _out_prev, zi=cs.out_bp_zi[cs.prev_model.id][idx])
-                fade_steps = np.linspace(0, 1, cs.seq_len)
-                filtered_out[idx] = np.array(
-                    filtered_out[idx]) * fade_steps + np.array(_filtered_out_prev) * (1 - fade_steps)
+                # equal power crossfade
+                # Calculate crossfade progress for this block
+                block_start = cs.iterations_in_this_model_counter / n_iter_for_crossfade
+                block_end = (cs.iterations_in_this_model_counter +
+                             1) / n_iter_for_crossfade
+
+                # Create crossfade curve across 1024 samples
+                crossfade_progress = np.linspace(
+                    block_start, block_end, cs.seq_len)
+
+                # Asymmetric curve: starts slow, accelerates at the end
+                # Using power curve to create 90-10 split behavior
+                # Cubic curve (slow start, fast end)
+                new_model_weight = crossfade_progress ** 6
+                old_model_weight = 1 - new_model_weight
+
+                filtered_out[idx] = (np.array(filtered_out[idx]) * new_model_weight +
+                                     np.array(_filtered_out_prev) * old_model_weight)
+
         filtered_out = np.array(filtered_out)
         ### ----------------- end of output filtering ###
+
+        # filtered_out = normalise(filtered_out) # FIXME are ranges calculated with filtering or without??
 
         in_audio = data_tensor.sum(axis=0).numpy().astype(np.float32)  # in
         out_audio = filtered_out.sum(axis=0).astype(np.float32)  # out
@@ -262,13 +301,22 @@ async def callback(block, cs, streamer):
                 cs.mssd.mssd_queue.put_nowait((in_audio, out_audio))
 
         if cs.audio_stream:  # could spatialise
+
+            mixed_audio = None
             if cs.mssd_enabled:
-                mssd_audio = cs.mssd.latest_mssd_audio
-                mixed_audio = mssd_audio
+                # mixed_audio = cs.mssd.latest_audio
+                mixed_audio = cs.mssd.get_audio()
+                # envelope follower so that mssd respects silence
+                model_output = filtered_out.sum(axis=0).astype(np.float32)
+                envelope = np.abs(model_output)
+                envelope = gaussian_filter1d(envelope, sigma=2.0)
+                mixed_audio = mixed_audio * envelope * 10.0
             else:
-                mixed_audio = out_audio
+                mixed_audio = 10*out_audio
+
             stereo_data = np.column_stack(
                 [mixed_audio, mixed_audio]).flatten().astype(np.float32)
+
             try:
                 cs.audio_queue.put_nowait(stereo_data.tobytes())
             except queue.Full:
@@ -295,8 +343,8 @@ async def callback(block, cs, streamer):
                 plotter_signals_data, signal_data_len=cs.seq_len)
 
         # # permute output
-        # if cs.permute_out:
-        #     filtered_out = filtered_out[cs.model_perm]
+        if cs.permute_out:
+            filtered_out = filtered_out[cs.model_perm]
 
         # # send each feature to Bela or OSC
         for idx in range(cs.out_size):
@@ -332,7 +380,9 @@ async def callback(block, cs, streamer):
 
         # if it's time to change model...
         if (past_change_model == 0 and cs.change_model == 1):
-            change_model(filtered_out, cs)
+            print(
+                f"Ratio: {ratio:.2f} > {cs.ratio_rising_threshold:.2f}, changing model")
+            change_model(filtered_out, cs, random=False)  # change model
 
             # #  debug audio callback diagnostics
             # if cs.debug_counter % 50 == 0:
@@ -397,10 +447,8 @@ if __name__ == "__main__":
         # initial ratio (avg amplitude / std) schmidt trigger rising threshold for model change
         init_ratio_rising_threshold=30,
         # initial ratio (avg amplitude / std) schmidt trigger falling threshold for model change
-        init_ratio_falling_threshold=10,
+        init_ratio_falling_threshold=12,
         threshold_leak=1,  # amount to leak the threshold over time
-        trigger_width=25,  # width of the trigger in samples
-        trigger_idx=4,  # index of the trigger output
         osc_ip=osc_ip,  # OSC server IP
         osc_port=osc_port,  # OSC server port
         plotting_enabled=args.plot,  # enable Bokeh plotting
@@ -408,9 +456,11 @@ if __name__ == "__main__":
         play_audio=args.audio,
         audio_queue_len=10 if args.plot else 2,  # 10 if using bokeh
         mssd_enabled=args.mssd,
-        model_type=args.model_type
+        model_type=args.model_type,
+        # moving average window size for MSSD
+        mssd_moving_avg_win_sz=64 if args.mssd else 0,
         # running_norm=True,  # whether to use running normalization
-        # permute_out=False, # permute model output dimensions
+        permute_out=True,  # permute model output dimensions
         # path="src/models/trained/transformer-autoencoder-jan",
     )
     in_vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',

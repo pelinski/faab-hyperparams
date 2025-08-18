@@ -4,7 +4,6 @@
 #include <libraries/Scope/Scope.h>
 
 #define NUM_SENSORS 8 // Number of sensors
-#define NUM_OUTPUTS 4 // Number of output parameters
 
 unsigned int gAudioFramesPerAnalogFrame; // Number of audio frames per analog
                                          // frame
@@ -13,11 +12,6 @@ float gInvAudioFramesPerAnalogFrame;     // 1/audio frames per analog frame
 
 // Vector of Watcher pointers
 std::vector<Watcher<float>*> gFaabWatchers;
-
-// // Osc
-// float gFrequency[NUM_SENSORS] = {100.0, 200.0, 400.0, 800.0, 1600.0, 3200.0, 6400.0, 12800.0};
-// float gPhase[NUM_SENSORS] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-// float gAmplitude[NUM_SENSORS] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
 Scope scope;
 
@@ -59,23 +53,6 @@ void render(BelaContext* context, void* userData) {
 
             scope.log(gIn[0], gIn[1], gIn[2], gIn[3], gIn[4], gIn[5], gIn[6], gIn[7]);
         }
-
-        // // audio output
-        // float out = 0.0;
-        // for (unsigned int i = 0; i < NUM_SENSORS; i++) {
-        //     out += gAmplitude[i] * sinf(gPhase[i]);
-        // }
-        // for (unsigned int channel = 0; channel < context->audioOutChannels; channel++) {
-        //     audioWrite(context, n, channel, out);
-        // }
-
-        // // osc
-        // for (unsigned int i = 0; i < NUM_SENSORS; i++) {
-        //     // Update and wrap phase of sine tone
-        //     gPhase[i] += 2.0f * (float)M_PI * gFrequency[i] * gInvSampleRate;
-        //     if (gPhase[i] > M_PI)
-        //         gPhase[i] -= 2.0f * (float)M_PI;
-        // }
     }
 }
 

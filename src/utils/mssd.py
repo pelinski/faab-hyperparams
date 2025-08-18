@@ -9,7 +9,7 @@ class MultiScaleSpectralDiff:
     Creates difference spectrograms for each STFT scale and can sonify them.
     """
 
-    def __init__(self, sample_rate=44100, scales=None, enable_sonification=False, target_block_size=1024):
+    def __init__(self, sample_rate=44100, scales=None, enable_sonification=False, target_block_size=1024, moving_average_window_size=32):
         self.sample_rate = sample_rate
         self.enable_sonification = enable_sonification
         self.target_block_size = target_block_size
@@ -19,14 +19,16 @@ class MultiScaleSpectralDiff:
             {'window_size': 512, 'hop_length': 128},
             {'window_size': 1024, 'hop_length': 1024}
         ]
+        self.moving_average_window_size = moving_average_window_size
 
         if self.enable_sonification:
-            self.sonifiers = [BlockSonifier(sample_rate=sample_rate, target_block_size=target_block_size)
+            self.sonifiers = [BlockSonifier(sample_rate=sample_rate, target_block_size=target_block_size, moving_average_window_size=self.moving_average_window_size)
                               for _ in range(len(self.scales))]
 
         self.mssd_queue = queue.Queue(maxsize=5)
         self.mssd_results = queue.Queue(maxsize=5)
-        self.latest_mssd_audio = np.zeros(target_block_size, dtype=np.float32)
+        self.audio_queue = queue.Queue(maxsize=1)
+        self.latest_audio = np.zeros(target_block_size, dtype=np.float32)
 
     def _mssd_worker(self):
         """Worker thread to process audio blocks and compute MSSD."""
@@ -34,11 +36,26 @@ class MultiScaleSpectralDiff:
             try:
                 in_audio, out_audio = self.mssd_queue.get(timeout=1)
                 mssd_per_scale = self.process_block(in_audio, out_audio)
-                mixed_audio = self.get_audio(mssd_per_scale)
+                mixed_audio = self.get_mixed_audio_from_mssd(mssd_per_scale)
 
-                self.latest_mssd_audio = mixed_audio if mixed_audio is not None else np.zeros(
+                # handle audio queue
+                audio_out = mixed_audio if mixed_audio is not None else np.zeros(
                     self.target_block_size, dtype=np.float32)
+                self.latest_audio = audio_out
+                try:
+                    # If queue is full, remove oldest item first (FIFO)
+                    if self.audio_queue.full():
+                        try:
+                            self.audio_queue.get_nowait()
+                        except queue.Empty:
+                            pass  # Queue became empty between full() check and get_nowait()
 
+                    self.audio_queue.put_nowait(audio_out.copy())
+                except queue.Full:
+                    # This shouldn't happen after the above logic, but just in case
+                    print("MSSD audio queue still full after cleanup")
+
+                # handle results queue
                 try:
                     self.mssd_results.put_nowait((mssd_per_scale, mixed_audio))
                 except queue.Full:
@@ -105,7 +122,7 @@ class MultiScaleSpectralDiff:
             'hop_length': hop_length,
         }
 
-    def get_audio(self, results):
+    def get_mixed_audio_from_mssd(self, results):
         if not self.enable_sonification:
             return None
 
@@ -114,22 +131,43 @@ class MultiScaleSpectralDiff:
         for _, scale_data in results.items():
             if scale_data is not None and 'audio' in scale_data and scale_data['audio'] is not None:
                 audio = scale_data['audio']
-                mixed_audio += audio * 0.25  # Scale down each layer to prevent clipping
+                # Scale down each layer to prevent clipping
+                mixed_audio += audio * 1 / len(results.items())
 
-        # Normalize mixed audio to prevent clipping
-        max_val = np.max(np.abs(mixed_audio))
-        if max_val > 0:
-            mixed_audio = mixed_audio / max_val * 0.5  # Conservative scaling
+        # # Normalize mixed audio to prevent clipping
+        # max_val = np.max(np.abs(mixed_audio))
+        # if max_val > 0:
+        #     mixed_audio = mixed_audio / max_val * 0.5  # Conservative scaling
 
         return mixed_audio
+
+    def get_audio(self):
+        """
+        Safe method to get latest audio without blocking.
+        Returns the most recent audio or fallback if none available.
+        """
+        latest_audio = None
+
+        try:
+            latest_audio = self.audio_queue.get_nowait()
+        except queue.Empty:
+            # If queue is empty, return None
+            pass
+
+        if latest_audio is not None:
+            return latest_audio
+        else:
+            # Queue was empty, return latest known good audio
+            return self.latest_audio
 
 
 class BlockSonifier:
     """Block-based sonification that outputs exactly 1024 samples per block."""
 
-    def __init__(self, sample_rate, target_block_size=1024):
+    def __init__(self, sample_rate, target_block_size=1024, moving_average_window_size=32):
         self.sample_rate = sample_rate
         self.target_block_size = target_block_size
+        self.moving_average_window_size = moving_average_window_size
 
         # Phase accumulators for coherent synthesis
         self.phase_accumulators = None
@@ -147,15 +185,13 @@ class BlockSonifier:
         spectrogram = diff_spec_data['spectrogram']
         frequencies = diff_spec_data['frequencies']
 
-        n_frames, n_freq_bins = spectrogram.shape
+        n_frames, _ = spectrogram.shape
 
-        # Initialize phase accumulators if needed
         if self.phase_accumulators is None:
             self.frequencies = frequencies
-            # Use fewer frequency bins to reduce noise
-            # Much fewer frequencies
-            max_freq_idx = min(len(frequencies) // 4, 64)
-            self.phase_accumulators = np.random.rand(max_freq_idx) * 2 * np.pi
+            max_freq_idx = len(frequencies)
+            self.phase_accumulators = np.random.rand(
+                max_freq_idx) * 2 * np.pi
             self.phase_increments = 2 * np.pi * \
                 frequencies[:max_freq_idx] / self.sample_rate
 
@@ -168,8 +204,6 @@ class BlockSonifier:
 
         # For each frequency bin, create a continuous time-varying amplitude envelope
         for freq_idx in range(max_freq_idx):
-            if freq_idx >= n_freq_bins:
-                continue
 
             # Get amplitude envelope for this frequency across all frames
             amplitude_envelope = spectrogram[:, freq_idx] * amplitude_scale
@@ -193,11 +227,10 @@ class BlockSonifier:
 
             # Apply smoothing to reduce artifacts
             # Simple moving average to smooth amplitude changes
-            kernel_size = min(32, self.target_block_size // 10)
-            if kernel_size > 1:
-                kernel = np.ones(kernel_size) / kernel_size
-                interp_amplitudes = np.convolve(
-                    interp_amplitudes, kernel, mode='same')
+            kernel_size = self.moving_average_window_size
+            kernel = np.ones(kernel_size) / kernel_size
+            interp_amplitudes = np.convolve(
+                interp_amplitudes, kernel, mode='same')
 
             # Generate continuous sine wave
             phase_start = self.phase_accumulators[freq_idx]
@@ -209,12 +242,11 @@ class BlockSonifier:
             sine_wave = interp_amplitudes * np.sin(phases)
 
             # Apply fade-in/fade-out to reduce block boundary artifacts
-            fade_samples = min(64, self.target_block_size // 20)
-            if fade_samples > 0:
-                fade_in = np.linspace(0, 1, fade_samples)
-                fade_out = np.linspace(1, 0, fade_samples)
-                sine_wave[:fade_samples] *= fade_in
-                sine_wave[-fade_samples:] *= fade_out
+            fade_samples = 32
+            fade_in = np.linspace(0, 1, fade_samples)
+            fade_out = np.linspace(1, 0, fade_samples)
+            sine_wave[:fade_samples] *= fade_in
+            sine_wave[-fade_samples:] *= fade_out
 
             output_audio += sine_wave
 

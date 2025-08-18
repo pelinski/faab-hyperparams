@@ -239,15 +239,24 @@ def get_models_range(path='src/models/trained'):
     return json.load(open(f'{path}/models_range.json'))
 
 
-def find_closest_model(output_coordinates, scaled_model_coordinates, exclude=None):
+def find_closest_model(abs_output_coordinates, scaled_model_coordinates, bias=None, exclude=None):
 
     model_keys, scaled_model_coordinates = zip(
         *scaled_model_coordinates.items())
     scaled_model_coordinates = np.array(scaled_model_coordinates)
 
     # Calculate the Euclidean distances
+    abs_output_coordinates = np.array(abs_output_coordinates)
     distances = np.linalg.norm(
-        scaled_model_coordinates - output_coordinates, axis=1)
+        scaled_model_coordinates - abs_output_coordinates, axis=1)
+
+    if bias is not None:
+        # Apply bias to the distances
+        distances += np.array([bias[model_key] for model_key in model_keys])
+
+    # print distance to each model with model id
+    for model_key, distance in zip(model_keys, distances):
+        print(f"Model: {model_key}, Distance: {distance:.4f}")
 
     if exclude is not None:
         # Exclude the model if specified
@@ -372,29 +381,38 @@ def normalise(out, cs):
     return normalised_out
 
 
-def change_model(out, cs):
+def change_model(out, cs, random=False):
     # high sound amplitude and model has low variance --> change model
     # streamer.send_buffer(
     #     trigger_idx, 'f', seq_len, trigger_width*[1.0] + (seq_len-trigger_width)*[0.0])  # change trigger
     cs.prev_model = cs.model
 
-    out_coordinates = out[:, -1].tolist()
-    out_coordinates = [c * g for c,
-                       g in zip(out_coordinates, cs.gain)]
+    abs_out = np.abs(out)  # take absolute values of the output
+    # absolute average of the last 20 samples
+    abs_out_coordinates = abs_out.mean(axis=1).tolist()
+    # abs_out_coordinates = out[:, -1].tolist()
+    abs_out_coordinates = [c * g for c,
+                           g in zip(abs_out_coordinates, cs.gain)]
 
-    # find the closest model to the out_ coordinates, can't be the same as the current model
+    if random == True:
+        next_model = np.random.choice(list(cs.models.keys()))
+        cs.model = cs.models[next_model]
 
-    closest_model, _ = find_closest_model(
-        out_coordinates, cs.models_coordinates, exclude=cs.model.id)
-    cs.model = cs.models[closest_model]
-    # if cs.permute_out:
-    #     cs.model_perm = torch.randperm(4)
+    else:
+        # find the closest model to the out_ coordinates, can't be the same as the current model
+        closest_model, _ = find_closest_model(
+            abs_out_coordinates, cs.models_coordinates, bias=cs.model_distance_bias, exclude=cs.model.id)
+        cs.model = cs.models[closest_model]
 
+    cs.model_distance_bias[cs.model.id] += 0.2
+
+    if cs.permute_out:
+        cs.model_perm = torch.randperm(4)
     # reset counter and thresholds
     cs.iterations_in_this_model_counter = 0
     cs.ratio_rising_threshold, cs.ratio_falling_threshold = cs.init_ratio_rising_threshold, cs.init_ratio_falling_threshold
 
-    print(cs.model.id, np.round(out_coordinates, 4))
+    print("!!!!!!!!Changing model to:", cs.model.id)
 
 
 def calc_ratio_amplitude_variance(out, bridge_piezo, cs):
@@ -410,9 +428,9 @@ def calc_ratio_amplitude_variance(out, bridge_piezo, cs):
 
     ratio = weighted_model_out_std / weighted_avg_bridge_piezo
 
-    if cs.debug_counter % 10 == 0:
-        print(
-            f" Ratio: {ratio:.2f}, Weighted model out std: {weighted_model_out_std:.4f}, Weighted bridge piezo avg: {weighted_avg_bridge_piezo:.4f}")
+    # if cs.debug_counter % 10 == 0:
+    #     print(
+    #         f" Ratio: {ratio:.2f}, Weighted model out std: {weighted_model_out_std:.4f}, Weighted bridge piezo avg: {weighted_avg_bridge_piezo:.4f}")
 
     return ratio
 

@@ -4,6 +4,7 @@
 #include <Watcher.h>
 #include <vector>
 #include "BinaryStreamer.h"
+#include <libraries/Biquad/Biquad.h>
 
 #define NUM_SENSORS 8
 
@@ -15,6 +16,8 @@ std::vector<Watcher<float>*> gFaabWatchers;
 std::vector<BinaryStreamer*> gStreamers;
 const int gBasePriorityAuxTask = 90;
 const int gPlaybackBufferSize = 22050;
+
+Biquad hpFilters[NUM_SENSORS];	// Biquad high-pass frequency filters
 
 bool setup(BelaContext* context, void* userData) {
     gAudioFramesPerAnalogFrame = context->audioFrames / context->analogFrames;
@@ -35,6 +38,16 @@ bool setup(BelaContext* context, void* userData) {
             return false;
         }
         printf("Loaded file %zu: %s (%s)\n", i, filename.c_str(), gStreamers[i]->getVarName().c_str());
+
+        Biquad::Settings settings{
+        .fs = context->audioSampleRate/gAudioFramesPerAnalogFrame,
+        .type = Biquad::highpass,
+        .cutoff = 2,
+        .q = 0.707,
+        .peakGainDb = 0,
+        };
+	    hpFilters[i].setup(settings);
+
     }
 
     return true;
@@ -53,12 +66,10 @@ void render(BelaContext* context, void* userData) {
                 if (gStreamers[i]->isReady()) {
                     float sample = gStreamers[i]->getNextSample();
                     *gFaabWatchers[i] = sample;
-                    out += sample;
+                    out += hpFilters[i].process(sample);
                 }
             }
-
-            out = out / NUM_SENSORS; // average the output from all sensors
-
+            
             audioWrite(context, n, 0, out);
             audioWrite(context, n, 1, out);
         }
