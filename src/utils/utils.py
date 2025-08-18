@@ -17,8 +17,8 @@ from scipy import interpolate
 
 def get_device():
     # uncomment for mac m1!!! -- comment for clusters
-    return torch.device("mps" if torch.backends.mps.is_available() else "cuda:0" if torch.cuda.is_available() else "cpu")
-    # return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # return torch.device("mps" if torch.backends.mps.is_available() else "cuda:0" if torch.cuda.is_available() else "cpu")
+    return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 def load_hyperparams():
@@ -81,7 +81,9 @@ def load_hyperparams():
     parser.add_argument("--num_encoder_layers",
                         help="number of encoder layers", default=7, type=int,)
     parser.add_argument("--plotter_samples",
-                        help="number of samples to plot", default=5, type=int,)
+                        help="number of samples to plot", default=5, type=int)
+    parser.add_argument("--tf_type", help="transformer type: timelin or timecomp",
+                        default=None, type=str)
 
     args = parser.parse_args()
 
@@ -97,11 +99,6 @@ def load_hyperparams():
                    "seq_len": hp["seq_len"] if "seq_len" in hp else args.seq_len,
                    "pred": hp["pred"] if "pred" in hp else args.pred,
                    "batch_size": hp["batch_size"] if "batch_size" in hp else args.batch_size,
-                   "feat_len": hp["feat_len"] if "feat_len" in hp else args.feat_len,
-                   "comp_feat_len": hp["comp_feat_len"] if "comp_feat_len" in hp else args.comp_feat_len,
-                   "comp_seq_len": hp["comp_seq_len"] if "comp_seq_len" in hp else args.comp_seq_len,
-                   "ff_size_features": hp["ff_size_features"] if "ff_size_features" in hp else args.ff_size_features,
-                   "ff_size_time": hp["ff_size_time"] if "ff_size_time" in hp else args.ff_size_time,
                    "num_layers": hp["num_layers"] if "num_layers" in hp else args.num_layers,
                    "model": hp["model"] if "model" in hp else args.model,
                    "max_grad_norm": hp["max_grad_norm"] if "max_grad_norm" in hp else args.max_grad_norm,
@@ -122,9 +119,24 @@ def load_hyperparams():
                 "num_heads": hp["num_heads"] if "num_heads" in hp else args.num_heads,
                 "pe_scale_factor": hp["pe_scale_factor"] if "pe_scale_factor" in hp else args.pe_scale_factor,
                 "mask": hp["mask"] if "mask" in hp else args.mask,
+                "tf_type": hp["tf_type"] if "tf_type" in hp else args.tf_type,
+
             }
         )
-
+        if hyperparams["tf_type"] == "timecomp":
+            hyperparams.update({
+                "feat_len": hp["feat_len"] if "feat_len" in hp else args.feat_len,
+                "comp_feat_len": hp["comp_feat_len"] if "comp_feat_len" in hp else args.comp_feat_len,
+                "comp_seq_len": hp["comp_seq_len"] if "comp_seq_len" in hp else args.comp_seq_len,
+                "ff_size_features": hp["ff_size_features"] if "ff_size_features" in hp else args.ff_size_features,
+                "ff_size_time": hp["ff_size_time"] if "ff_size_time" in hp else args.ff_size_time,
+            })
+        elif hyperparams["tf_type"] == "timelin":
+            hyperparams.update({
+                "d_model": hp["d_model"] if "d_model" in hp else args.d_model,
+                "ff_size": hp["ff_size"] if "ff_size" in hp else args.ff_size,
+                "feat_in_size": hp["feat_in_size"] if "feat_in_size" in hp else args.feat_in_size,
+            })
     return dict(hyperparams), args.hyperparameters
 
 
@@ -208,8 +220,8 @@ def load_model(_id, type, path='src/models/trained'):
     epochs = id_ep[_id]
     config = load_config(_id, epochs, path)
     if type == "timecomp":
-        model = TransformerTimeAutoencoder(comp_feat_len=config["comp_feat_len"], comp_seq_len=config["comp_seq_len"], feat_len=config["feat_len"], num_heads=config["num_heads"], ff_size_features=config["ff_size_features"], ff_size_time=config["ff_size_time"],
-                                           dropout=config["dropout"], num_layers=config["num_layers"], seq_len=config["seq_len"], pe_scale_factor=config["pe_scale_factor"], mask=config["mask"], id=_id)
+        model = TransformerTimeAutoencoder(comp_feat_len=config["comp_feat_len"], comp_seq_len=config["comp_seq_len"], feat_len=config["feat_len"], num_heads=config["num_heads"], ff_size_features=config["ff_size_features"],
+                                           ff_size_time=config["ff_size_time"], dropout=config["dropout"], num_layers=config["num_layers"], seq_len=config["seq_len"], pe_scale_factor=config["pe_scale_factor"], mask=config["mask"], id=_id)
     if type == "timelin":
         model = TransformerAutoencoder(d_model=config["d_model"], feat_in_size=config["feat_in_size"], num_heads=config["num_heads"], ff_size=config["ff_size"],
                                        dropout=config["dropout"], num_layers=config["num_layers"], max_len=config["seq_len"], pe_scale_factor=config["pe_scale_factor"], mask=config["mask"], id=_id)
@@ -277,7 +289,7 @@ def _scale_params(epochs={}, path='src/models/trained', timecomp=False):
     """Maps the hyperparameters of the trained models to a 0-1 scale.
 
     Args:
-        epochs (dict, optional): Epochs each model has been trained. 
+        epochs (dict, optional): Epochs each model has been trained.
         path (str, optional): Path where the models are. Defaults to 'src/models/trained'.
 
     Returns:
@@ -375,8 +387,7 @@ def normalise(out, cs):
             cs.device), torch.FloatTensor(_model_range["max"]).to(cs.device)
 
     # -- normalise before sending to Bela!! --
-    normalised_out = (out - _min.unsqueeze(1)) / \
-        (_max - _min).unsqueeze(1)
+    normalised_out = (out - _min.unsqueeze(1)) / (_max - _min).unsqueeze(1)
 
     return normalised_out
 

@@ -3,7 +3,7 @@ import wandb
 import os
 import numpy as np
 from tqdm import tqdm
-from models import TransformerAutoencoder, LSTM
+from models import TransformerAutoencoder, LSTM, TransformerTimeAutoencoder
 from dataset import Dataset, DatasetPred
 import pickle
 from utils.utils import get_html_plot, load_hyperparams, weighted_MSELoss
@@ -37,9 +37,12 @@ with wandb.init(project=hyperparameters["project"], config=hyperparameters,  set
     if config.model == "lstm":
         model = LSTM(feat_len=config.feat_len, feat_out_size=config.feat_len, ff_size_features=config.ff_size_features, num_layers=config.num_layers,
                      hidden_size=config.comp_feat_len, seq_len=config.seq_len, dropout=config.dropout, proj_size=config.proj_size).to(config.device)
-    else:
-        model = TransformerAutoencoder(comp_feat_len=config.comp_feat_len, feat_len=config.feat_len, num_heads=config.num_heads, ff_size_features=config.ff_size_features, ff_size_time=config.ff_size_time,
-                                       dropout=config.dropout, num_layers=config.num_layers, seq_len=config.seq_len, comp_seq_len=config.comp_seq_len, pe_scale_factor=config.pe_scale_factor, mask=config.mask).to(config.device)
+    elif config.model == "transformer" and config.tf_type == "timelin":
+        model = TransformerAutoencoder(d_model=config.d_model, feat_in_size=config.feat_in_size, num_heads=config.num_heads, ff_size=config.ff_size,
+                                       dropout=config.dropout, num_layers=config.num_layers, max_len=config.seq_len, pe_scale_factor=config.pe_scale_factor, mask=config.mask).to(config.device)
+    elif config.model == "transformer" and config.tf_type == "timecomp":
+        model = TransformerTimeAutoencoder(comp_feat_len=config.comp_feat_len, comp_seq_len=config.comp_seq_len, feat_len=config.feat_len, num_heads=config.num_heads, ff_size_features=config.ff_size_features,
+                                           ff_size_time=config.ff_size_time, dropout=config.dropout, num_layers=config.num_layers, seq_len=config.seq_len, pe_scale_factor=config.pe_scale_factor, mask=config.mask).to(config.device)
 
     if config.optimizer == "adam":
         optimizer = torch.optim.Adam(
