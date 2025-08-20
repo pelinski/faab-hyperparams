@@ -18,7 +18,7 @@ from scipy.ndimage import gaussian_filter1d
 
 
 class CallbackState:
-    def __init__(self, seq_len, num_models, in_size, out_size, sample_rate, num_blocks_to_compute_avg, num_blocks_to_compute_std, hp_filter_freq, lp_filter_freq, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, osc_ip=None, osc_port=None, plotting_enabled=False, out2Bela=False, play_audio=False, audio_queue_len=10, mssd_enabled=False, model_type="timelin", mssd_moving_avg_win_sz=32, permute_out=False):
+    def __init__(self, seq_len, num_models, in_size, out_size, sample_rate, num_blocks_to_compute_avg, num_blocks_to_compute_std, hp_filter_freq, lp_filter_freq, num_of_iterations_in_this_model_check, init_ratio_rising_threshold, init_ratio_falling_threshold, threshold_leak, osc_ip=None, osc_port=None, plotting_enabled=False, out2Bela=False, play_audio=False, audio_queue_len=10, mssd_enabled=False, model_type="timelin", mssd_moving_avg_win_sz=32, permute_out=False, models_path="src/models/trained/transformer-autoencoder-jan"):
 
         ### ----------------- start of params definitions ###
         self.seq_len = seq_len
@@ -42,7 +42,7 @@ class CallbackState:
         self.model_type = model_type
         self.plotting_enabled = plotting_enabled
         self.mssd_moving_avg_win_sz = mssd_moving_avg_win_sz
-        # self.path = path
+        self.models_path = models_path
         ### ----------------- end of params definitions ###
 
         print(f"Using device: {self.device}")
@@ -82,19 +82,13 @@ class CallbackState:
         ### ----------------- start of models init ###
 
         # preload models
-        # models in desc order of train loss, take best 20
-        if self.model_type == "timelin":
-            path = "src/models/trained/transformer-autoencoder-jan"
-        elif self.model_type == "timecomp":
-            path = "src/models/trained/transformer-autoencoder-timecomp-jan"
-        else:
-            raise ValueError(
-                f"Unknown model type: {self.model_type}. Use 'timelin' or 'timecomp'.")
-        sorted_models = get_sorted_models(path=path, num_models=num_models)
+        sorted_models = get_sorted_models(
+            path=self.models_path, num_models=num_models)
         self.models = {}
         self.models_running_range = {}
         for _id in sorted_models:
-            self.models[_id] = load_model(_id, self.model_type, path=path)
+            self.models[_id] = load_model(
+                _id, self.model_type, path=self.models_path)
             self.models_running_range[_id] = {"min": torch.FloatTensor([0, 0, 0, 0]).to(
                 self.device), "max": torch.FloatTensor([0, 0, 0, 0]).to(self.device)}
 
@@ -115,11 +109,12 @@ class CallbackState:
 
         # model space
         # min and max of model outputs (after passing the full dataset)
-        self.full_dataset_models_range = get_models_range(path=path)
+        self.full_dataset_models_range = get_models_range(
+            path=self.models_path)
         # model's chosen 4 hyperparameters mapped to values between 0 and 1
         self.models_coordinates = get_models_coordinates(
-            path=path, sorted=True, num_models=num_models)
-        starter_id = sorted_models[-1]  # h0o65m8s is nice
+            path=self.models_path, sorted=True, num_models=num_models)
+        starter_id = sorted_models[0]
         self.model_distance_bias = {
             model_id: 0.0 for model_id in sorted_models}
 
@@ -265,7 +260,8 @@ async def callback(block, cs, streamer):
                 _out_prev = interpolate_signal(_out_prev, cs.seq_len)
                 _filtered_out_prev, cs.out_bp_zi[cs.prev_model.id][idx] = signal.sosfilt(
                     cs.out_bp[cs.prev_model.id][idx], _out_prev, zi=cs.out_bp_zi[cs.prev_model.id][idx])
-                # equal power crossfade
+
+                # potencia de 6 crossfading
                 # Calculate crossfade progress for this block
                 block_start = cs.iterations_in_this_model_counter / n_iter_for_crossfade
                 block_end = (cs.iterations_in_this_model_counter +
@@ -461,7 +457,8 @@ if __name__ == "__main__":
         mssd_moving_avg_win_sz=64 if args.mssd else 0,
         # running_norm=True,  # whether to use running normalization
         permute_out=True,  # permute model output dimensions
-        # path="src/models/trained/transformer-autoencoder-jan",
+
+        models_path="src/models/trained/transformer-minidataset/top-runs",
     )
     in_vars = ['gFaabSensor_1', 'gFaabSensor_2', 'gFaabSensor_3', 'gFaabSensor_4',
                'gFaabSensor_5', 'gFaabSensor_6', 'gFaabSensor_7', 'gFaabSensor_8']

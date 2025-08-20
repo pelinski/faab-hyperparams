@@ -297,7 +297,7 @@ def _scale_params(epochs={}, path='src/models/trained', timecomp=False):
     """
     run_ids = get_all_run_ids(path)
     if not timecomp:
-        params = ["ff_size_features", "num_heads",
+        params = ["ff_size", "num_heads",
                   "num_layers", "learning_rate"]
     else:
         params = ["ff_size_features", "ff_size_time",
@@ -311,12 +311,12 @@ def _scale_params(epochs={}, path='src/models/trained', timecomp=False):
     mapped_ranges = {}
     if not timecomp:
         ranges = {
-            "ff_size_features": [8, 16, 32, 64, 128, 256],
+            "ff_size": [8, 16, 32, 64, 128, 256],
             "num_heads": [1, 2, 4],
             "num_layers": [1, 2, 3, 4, 5, 6, 7, 8]
         }
         column_functions = {
-            "ff_size_features": lambda x: mapped_ranges["ff_size_features"][x],
+            "ff_size": lambda x: mapped_ranges["ff_size"][x],
             "num_heads": lambda x: mapped_ranges["num_heads"][x],
             "num_layers": lambda x: mapped_ranges["num_layers"][x],
             "learning_rate": lambda x: x*1000

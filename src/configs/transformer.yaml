@@ -4,14 +4,12 @@ pickle_path: "src/dataset/data/0117/0117_processed_1024.pkl"
 weights_path: "src/dataset/data/0117/weights.pkl"
 pred: False
 seq_len: 1024
-comp_seq_len: 1024
 batch_size: 64
 
 # common model parameters
-feat_len: 8 # feature size
-comp_feat_len: 4
-ff_size_features: 12
-ff_size_time: 2048
+feat_in_size: 8 # feature size
+d_model: 4
+ff_size: 12
 num_layers: 4
 
 # model parameters transformer
